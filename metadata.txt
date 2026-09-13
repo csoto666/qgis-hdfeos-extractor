@@ -1,0 +1,23 @@
+[general]
+name=HDF-EOS Extractor
+qgisMinimumVersion=3.16
+description=Extracts hyperspectral cubes packed in HDF-EOS5 files (Planet Tanager and similar) into ENVI's native format, with centre wavelengths, FWHM and a bad band list written into the header. / Extrae cubos hiperespectrales empaquetados en HDF-EOS5 al formato nativo de ENVI.
+version=1.0
+author=Carlo Soto Castro
+email=carlo.soto.castro@gmail.com
+
+about=Hyperspectral products such as Planet Tanager ship as HDF-EOS5: one container holding the data cube, the per-pixel geolocation arrays, the quality masks and the sun-sensor geometry. Software written before those products existed cannot open them, and a plain raster export throws away the spectral metadata that makes a cube usable. This plugin adds one Processing algorithm, "HDF-EOS5 to ENVI", that unpacks the container into ENVI's native format - a raw binary file plus a text header, a format that has not changed in decades and that every hyperspectral package reads. The cube is written as BIL, the interleave ENVI expects for spectral processing, and the header carries the centre wavelengths, the FWHM, the fill value and a bad band list (bbl) with the water vapour absorption windows already flagged, so MNF, PPI and spectral unmixing do not drag those bands along. Unorthorectified products come in sensor geometry with latitude and longitude stored per pixel; the plugin can write these as an IGM file for ENVI's "Georeference from Input Geometry". The 2D ancillary layers - cloud and cirrus masks, nodata, aerosol optical depth, column water vapour, solar and sensor zenith and azimuth - can be stacked into a single multiband file with named bands. Because it is a Processing algorithm it also works in batch mode over a folder of scenes and inside the graphical modeller. NO MANDATORY EXTERNAL DEPENDENCY: it reads through GDAL and numpy, both bundled with QGIS. If h5py is installed it is used instead, because it gives fuller access to HDF5 attributes and to the 1D wavelength and FWHM datasets; the plugin falls back to GDAL on its own when h5py is absent. Nothing is downloaded and no remote service is contacted. ESPANOL: agrega un algoritmo a la Caja de herramientas que extrae el cubo hiperespectral de un archivo HDF-EOS5 al formato nativo de ENVI, con longitudes de onda, FWHM, valor de relleno y lista de bandas malas en la cabecera. Opcionalmente escribe el archivo de geometria de entrada (IGM) para georreferenciar productos sin ortorectificar, y apila las capas auxiliares 2D en un solo archivo multibanda. Funciona por lotes y desde el modelador grafico. No requiere dependencias externas obligatorias.
+
+icon=icon.png
+tags=hyperspectral,hdf5,hdf-eos,envi,tanager,planet,remote sensing,spectral,raster,imagery,processing
+
+changelog=1.0 - Version inicial. Algoritmo "HDF-EOS5 to ENVI" en la Caja de herramientas: extrae el cubo a ENVI BIL con wavelength, fwhm, data ignore value y bbl (ventanas de absorcion de vapor de agua marcadas); escribe el IGM de geolocalizacion para productos basic en geometria de sensor; apila las capas auxiliares 2D (mascaras, atmosfera, geometria sol-sensor) en un multibanda con nombres. Lectura por bloques para no cargar el cubo entero en memoria, con avance y cancelacion. Backend h5py con respaldo automatico en GDAL: la lectura por GDAL usa ReadRaster y no ReadAsArray, para no depender del modulo gdal_array, que no carga cuando la numpy instalada es mas nueva que la que uso GDAL al compilarse; y recupera los atributos HDF5 desde los metadatos de la raiz, que es donde GDAL los aplana. Las longitudes de onda se buscan por coincidencia exacta del nombre antes que por coincidencia parcial, para que "good_wavelengths" no se lleve la busqueda de "wavelengths".
+
+tracker=https://github.com/csoto666/qgis-hdfeos-extractor/issues
+repository=https://github.com/csoto666/qgis-hdfeos-extractor
+homepage=https://github.com/csoto666/qgis-hdfeos-extractor
+
+category=Analysis
+hasProcessingProvider=yes
+experimental=False
+deprecated=False
