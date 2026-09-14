@@ -49,5 +49,19 @@ except ImportError:                       # pragma: no cover
                 "No hay enlaces de Qt disponibles. Dentro de QGIS esto no "
                 "deberia pasar; fuera, hace falta PyQt5 o PyQt6.")
 
-__all__ = ["QtCore", "QtGui", "QtWidgets", "Qt", "pyqtSignal",
+
+def enum(raiz, grupo, nombre):
+    """Resuelve un enum de Qt en Qt5 y en Qt6.
+
+    Qt6 metio los enums dentro de su propia clase -``Qt.PenStyle.DashLine``-
+    mientras que en Qt5 cuelgan del espacio de nombres -``Qt.DashLine``-.
+    QGIS se compila contra los dos segun la version, asi que el plugin no
+    puede elegir uno.
+    """
+    if hasattr(raiz, grupo):
+        return getattr(getattr(raiz, grupo), nombre)
+    return getattr(raiz, nombre)
+
+
+__all__ = ["QtCore", "QtGui", "QtWidgets", "Qt", "pyqtSignal", "enum",
            "DENTRO_DE_QGIS"]

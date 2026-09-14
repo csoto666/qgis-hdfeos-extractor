@@ -7,8 +7,10 @@ arrastrar QGIS detras. Todo lo que este paquete necesita es numpy; GDAL y
 xarray se usan si estan y no se exigen.
 """
 
+from .colormap import PALETAS, colorear
 from .cube import CubeError, HyperspectralCube
 from .envi import EnviError, EnviHeader, EnviSource
+from .geo import GeoError, GeoTransform
 from .library import LibraryError, SpectralLibrary
 from .rgb import PRESETS, RGBComposer, estirar, limites
 from .sources import GdalSource, MemorySource
@@ -17,8 +19,10 @@ from .spectral import (Signature, SpectralProfile, signature_from_pixel,
                        spectral_angle, statistics)
 
 __all__ = [
+    "PALETAS", "colorear",
     "CubeError", "HyperspectralCube",
     "EnviError", "EnviHeader", "EnviSource",
+    "GeoError", "GeoTransform",
     "GdalSource", "MemorySource",
     "PRESETS", "RGBComposer", "estirar", "limites",
     "Signature", "SpectralProfile", "signature_from_pixel",

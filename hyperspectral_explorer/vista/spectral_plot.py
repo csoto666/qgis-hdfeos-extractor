@@ -40,25 +40,12 @@ medicion y no lo es.
 
 import numpy as np
 
-from .qt import QtCore, QtGui, QtWidgets, Qt, pyqtSignal
+from .qt import QtCore, QtGui, QtWidgets, Qt, enum as _enum, pyqtSignal
 
 try:
     import pyqtgraph as pg
 except Exception:                          # pragma: no cover
     pg = None
-
-
-def _enum(raiz, grupo, nombre):
-    """Resuelve un enum de Qt en Qt5 y en Qt6.
-
-    Qt6 metio los enums dentro de su propia clase -``Qt.PenStyle.DashLine``-
-    mientras que en Qt5 cuelgan del espacio de nombres -``Qt.DashLine``-.
-    QGIS se compila contra los dos segun la version, asi que el plugin no
-    puede elegir uno.
-    """
-    if hasattr(raiz, grupo):
-        return getattr(getattr(raiz, grupo), nombre)
-    return getattr(raiz, nombre)
 
 
 LINEA_PUNTEADA = _enum(Qt, "PenStyle", "DashLine")
@@ -132,7 +119,7 @@ class _Lienzo(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super(_Lienzo, self).__init__(parent)
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(110)
         self.setMouseTracking(True)
         self.setAutoFillBackground(True)
         self.curvas = []
@@ -234,7 +221,7 @@ class _Lienzo(QtWidgets.QWidget):
         vcentro = _enum(Qt, "AlignmentFlag", "AlignVCenter")
         centro = _enum(Qt, "AlignmentFlag", "AlignHCenter")
 
-        for valor in _marcas(x0, x1):
+        for valor in _marcas(x0, x1, _cuantas(area.width(), 95)):
             px, _ = self._a_pantalla(valor, y0)
             p.setPen(QtGui.QPen(QtGui.QColor(COLOR_REJILLA), 1))
             p.drawLine(QtCore.QPointF(px, area.top()),
@@ -242,7 +229,7 @@ class _Lienzo(QtWidgets.QWidget):
             p.setPen(QtGui.QColor(COLOR_EJES))
             p.drawText(QtCore.QRectF(px - 40, area.bottom() + 4, 80, 16),
                        centro, _formato(valor))
-        for valor in _marcas(y0, y1):
+        for valor in _marcas(y0, y1, _cuantas(area.height(), 34)):
             _, py = self._a_pantalla(x0, valor)
             p.setPen(QtGui.QPen(QtGui.QColor(COLOR_REJILLA), 1))
             p.drawLine(QtCore.QPointF(area.left(), py),
@@ -255,11 +242,20 @@ class _Lienzo(QtWidgets.QWidget):
         p.drawRect(area)
         p.drawText(QtCore.QRectF(area.left(), self.height() - 18,
                                  area.width(), 16), centro, self.etiqueta_x)
+        # El rotulo rotado se dibuja en un rectangulo tan largo como el alto
+        # del grafico, y se acorta con puntos suspensivos si no entra. Con un
+        # largo fijo y sin acortar, en un panel bajo el texto sale partido por
+        # la mitad -"ectancia"- en vez de encogerse.
+        largo = max(40.0, area.height())
+        metrica = QtGui.QFontMetrics(p.font())
+        rotulo = metrica.elidedText(self.etiqueta_y,
+                                    _enum(Qt, "TextElideMode", "ElideRight"),
+                                    int(largo))
         p.save()
         p.translate(12, area.center().y())
         p.rotate(-90)
-        p.drawText(QtCore.QRectF(-80, -8, 160, 16),
-                   _enum(Qt, "AlignmentFlag", "AlignCenter"), self.etiqueta_y)
+        p.drawText(QtCore.QRectF(-largo / 2.0, -8, largo, 16),
+                   _enum(Qt, "AlignmentFlag", "AlignCenter"), rotulo)
         p.restore()
 
     def _pintar_marcadores(self, p, area):
@@ -395,6 +391,11 @@ def _valor_en(curva, x):
     return None if not np.isfinite(v) else float(v)
 
 
+def _cuantas(espacio, por_marca):
+    """Cuantas marcas caben. Entre 2 y 6: menos no ubica, mas se pisa."""
+    return int(min(6, max(2, espacio // por_marca)))
+
+
 def _marcas(lo, hi, objetivo=6):
     """Marcas de eje en numeros redondos.
 
@@ -456,6 +457,14 @@ class SpectralPlot(QtWidgets.QWidget):
                                 foreground=COLOR_EJES)
             self._grafico = pg.PlotWidget()
             self._grafico.showGrid(x=True, y=True, alpha=0.25)
+            # pyqtgraph reescala los ejes solo y le agrega un prefijo SI al
+            # rotulo. En un eje de reflectancia eso pone "200" donde el valor
+            # es 0.2 y manda el "x10^-3" a la etiqueta, que en un panel
+            # angosto queda cortada: el usuario lee 200 de reflectancia. En
+            # el eje espectral hace lo mismo con 2000 nm -> "2 k".
+            for lado in ("left", "bottom"):
+                self._grafico.getPlotItem().getAxis(lado)\
+                    .enableAutoSIPrefix(False)
             self._grafico.addLegend(offset=(-10, 10))
             self._linea = pg.InfiniteLine(angle=90, movable=False)
             self._grafico.addItem(self._linea, ignoreBounds=True)

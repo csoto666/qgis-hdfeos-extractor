@@ -36,7 +36,9 @@ from qgis.core import QgsProject, QgsRasterLayer
 from ..core.cube import CubeError, HyperspectralCube
 from ..core.geo import GeoError, GeoTransform
 from ..core.library import LibraryError, SpectralLibrary
+from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
+from ..vista.cube_view import CubeView
 from ..vista.qt import QtGui, QtWidgets, Qt
 from ..vista.spectral_plot import SpectralPlot
 from . import map_tools
@@ -80,27 +82,48 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         caja = QtWidgets.QVBoxLayout(contenedor)
         caja.setContentsMargins(6, 6, 6, 6)
         caja.setSpacing(6)
-        caja.addWidget(self._bloque_capa())
-        caja.addWidget(self._bloque_modo())
+        caja.addWidget(self._bloque_escena())
 
-        # Divisor y no dos cajas fijas: el panel puede quedar angosto acoplado
-        # al costado o ancho abajo, y el usuario decide cuanto le da a cada
-        # parte segun lo que este haciendo.
+        caja.addWidget(self._bloque_rgb())
+
+        # Solo las dos vistas entran al divisor. Los bloques de control piden
+        # un alto minimo que no se puede negociar, y metidos en el divisor se
+        # lo quitan justamente a lo que hay que mirar: con cuatro bloques
+        # adentro, el grafico terminaba en una franja de cien pixeles.
+        # El cubo y el perfil van apilados y no en pestanas porque el sentido
+        # de todo esto es verlos a la vez.
         divisor = QtWidgets.QSplitter(Qt.Vertical)
-        divisor.addWidget(self._bloque_rgb())
+        divisor.addWidget(self._bloque_cubo())
         divisor.addWidget(self._bloque_grafico())
-        divisor.addWidget(self._bloque_firmas())
-        divisor.setStretchFactor(1, 3)
+        divisor.setStretchFactor(0, 3)
+        divisor.setStretchFactor(1, 2)
+        self._divisor = divisor
+        self._usuario_ajusto = False
+        divisor.splitterMoved.connect(self._divisor_arrastrado)
         caja.addWidget(divisor, 1)
+        caja.addWidget(self._bloque_firmas())
 
         self.estado = QtWidgets.QLabel("Elija una capa raster hiperespectral")
         self.estado.setWordWrap(True)
         caja.addWidget(self.estado)
         return contenedor
 
-    def _bloque_capa(self):
-        grupo = QtWidgets.QGroupBox("Cubo")
-        rejilla = QtWidgets.QHBoxLayout(grupo)
+    def _bloque_escena(self):
+        """Capa y modo de navegacion en un solo grupo.
+
+        Eran dos: dos titulos y dos marcos para dos filas. En un panel
+        acoplado al costado ese adorno se lo quita a las vistas, que es lo
+        unico que de verdad necesita alto.
+        """
+        grupo = QtWidgets.QGroupBox("Escena")
+        columna = QtWidgets.QVBoxLayout(grupo)
+        columna.setSpacing(4)
+        columna.addLayout(self._fila_capa())
+        columna.addLayout(self._fila_modo())
+        return grupo
+
+    def _fila_capa(self):
+        rejilla = QtWidgets.QHBoxLayout()
         self.combo_capa = QtWidgets.QComboBox()
         self.combo_capa.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                                       QtWidgets.QSizePolicy.Preferred)
@@ -110,11 +133,11 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         rejilla.addWidget(QtWidgets.QLabel("Capa:"))
         rejilla.addWidget(self.combo_capa, 1)
         rejilla.addWidget(self.boton_abrir)
-        return grupo
+        return rejilla
 
-    def _bloque_modo(self):
-        grupo = QtWidgets.QGroupBox("Navegacion")
-        fila = QtWidgets.QHBoxLayout(grupo)
+    def _fila_modo(self):
+        fila = QtWidgets.QHBoxLayout()
+        fila.addWidget(QtWidgets.QLabel("Navegacion:"))
         self.modos = {}
         for clave, texto, ayuda in (
                 (map_tools.MODO_PIXEL, "Pixel",
@@ -131,16 +154,25 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             self.modos[clave] = boton
         self.modos[map_tools.MODO_PIXEL].setChecked(True)
         fila.addStretch(1)
-        return grupo
+        return fila
 
     def _bloque_rgb(self):
         grupo = QtWidgets.QGroupBox("Composicion RGB")
         rejilla = QtWidgets.QGridLayout(grupo)
         rejilla.setVerticalSpacing(3)
 
-        rejilla.addWidget(QtWidgets.QLabel("Preset:"), 0, 0)
+        fila = QtWidgets.QHBoxLayout()
+        fila.addWidget(QtWidgets.QLabel("Preset:"))
         self.combo_preset = QtWidgets.QComboBox()
-        rejilla.addWidget(self.combo_preset, 0, 1, 1, 3)
+        self.combo_preset.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                        QtWidgets.QSizePolicy.Preferred)
+        fila.addWidget(self.combo_preset, 1)
+        fila.addWidget(QtWidgets.QLabel("Realce:"))
+        self.combo_realce = QtWidgets.QComboBox()
+        for modo in MODOS:
+            self.combo_realce.addItem(ETIQUETAS_REALCE.get(modo, modo), modo)
+        fila.addWidget(self.combo_realce, 1)
+        rejilla.addLayout(fila, 0, 0, 1, 4)
 
         self.controles_banda = {}
         for fila, (canal, etiqueta) in enumerate(
@@ -159,12 +191,34 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             rejilla.addWidget(leyenda, fila, 3)
             self.controles_banda[canal] = (deslizador, numero, leyenda)
 
-        rejilla.addWidget(QtWidgets.QLabel("Realce:"), 4, 0)
-        self.combo_realce = QtWidgets.QComboBox()
-        for modo in MODOS:
-            self.combo_realce.addItem(ETIQUETAS_REALCE.get(modo, modo), modo)
-        rejilla.addWidget(self.combo_realce, 4, 1, 1, 3)
         rejilla.setColumnStretch(1, 1)
+        return grupo
+
+    def _bloque_cubo(self):
+        grupo = QtWidgets.QGroupBox("Cubo hiperespectral")
+        caja = QtWidgets.QVBoxLayout(grupo)
+        caja.setContentsMargins(3, 3, 3, 3)
+        self.cubo = CubeView()
+        self.cubo.setToolTip(
+            "Arrastre sobre la imagen para recorrer el cubo.\n"
+            "Clic en un costado: esa banda pasa al frente.\n"
+            "Doble clic en el frente: vuelve a la composicion RGB.")
+        caja.addWidget(self.cubo, 1)
+
+        fila = QtWidgets.QHBoxLayout()
+        fila.addWidget(QtWidgets.QLabel("Paleta:"))
+        self.combo_paleta = QtWidgets.QComboBox()
+        for nombre in paletas():
+            self.combo_paleta.addItem(nombre)
+        fila.addWidget(self.combo_paleta)
+        self.boton_rgb = QtWidgets.QPushButton("Volver al RGB")
+        self.boton_rgb.setToolTip(
+            "Deja de mostrar una sola banda en la cara frontal")
+        fila.addWidget(self.boton_rgb)
+        fila.addStretch(1)
+        self.banda_frontal = QtWidgets.QLabel("frente: composicion RGB")
+        fila.addWidget(self.banda_frontal)
+        caja.addLayout(fila)
         return grupo
 
     def _bloque_grafico(self):
@@ -172,7 +226,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         caja = QtWidgets.QVBoxLayout(grupo)
         caja.setContentsMargins(3, 3, 3, 3)
         self.grafico = SpectralPlot()
-        caja.addWidget(self.grafico)
+        caja.addWidget(self.grafico, 1)
         self.lectura = QtWidgets.QLabel(" ")
         self.lectura.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         caja.addWidget(self.lectura)
@@ -180,9 +234,19 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
     def _bloque_firmas(self):
         grupo = QtWidgets.QGroupBox("Firmas guardadas")
+        # Preferred/Maximum y no el Expanding que traen los grupos: sin esto
+        # se queda con el alto sobrante en vez de cederselo al divisor, que
+        # es donde estan las dos vistas.
+        grupo.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
+                            QtWidgets.QSizePolicy.Maximum)
         caja = QtWidgets.QVBoxLayout(grupo)
         self.lista = QtWidgets.QListWidget()
         self.lista.setAlternatingRowColors(True)
+        # Con un tope, la lista deja de competir por el alto con las dos
+        # vistas. Acoplado al costado el panel es alto y angosto, y la suma de
+        # los minimos de cuatro bloques ahoga al divisor.
+        self.lista.setMinimumHeight(48)
+        self.lista.setMaximumHeight(88)
         self.lista.setToolTip(
             "La casilla muestra u oculta la curva en el grafico")
         caja.addWidget(self.lista)
@@ -230,9 +294,20 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.boton_csv.clicked.connect(self._exportar_csv)
         self.lista.itemChanged.connect(self._visibilidad_cambiada)
 
+        # El cubo y el mapa son dos maneras de senalar el mismo pixel, asi
+        # que los dos entran por el controlador y los dos escuchan su
+        # respuesta. Mover la cruz del cubo mueve el resaltado del mapa, y al
+        # reves, sin que ninguno de los dos conozca al otro.
+        self.cubo.posicionMovida.connect(self.controller.on_pixel_changed)
+        self.cubo.pixelElegido.connect(self.controller.on_pixel_changed)
+        self.cubo.longitudElegida.connect(self._banda_del_cubo)
+        self.combo_paleta.currentTextChanged.connect(self.cubo.set_paleta)
+        self.boton_rgb.clicked.connect(self._volver_al_rgb)
+
         self.controller.curvasCambiadas.connect(self.grafico.set_curvas)
         self.controller.bibliotecaCambiada.connect(self._refrescar_lista)
         self.controller.pixelCambiado.connect(self._mostrar_pixel)
+        self.controller.pixelCambiado.connect(self.cubo.set_posicion)
         self.controller.transectoCambiado.connect(self._mostrar_transecto)
         self.controller.composicionCambiada.connect(self._aplicar_composicion)
         self.controller.mensaje.connect(self._avisar)
@@ -263,6 +338,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         identificador = self.combo_capa.currentData()
         if not identificador:
             self.controller.close_cube()
+            self.cubo.set_cube(None)
             self._habilitar(False)
             return
         capa = QgsProject.instance().mapLayer(identificador)
@@ -303,6 +379,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         except GeoError:
             geo = GeoTransform.identidad()
         self.controller.set_cube(cubo, capa, geo)
+        self.cubo.set_cube(cubo, self.controller.composer)
+        self._volver_al_rgb()
         self._preparar_controles(cubo)
         self._habilitar(True)
         self._activar_herramienta()
@@ -332,7 +410,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
     def _habilitar(self, activo):
         for w in (self.combo_preset, self.combo_realce, self.lista,
                   self.boton_guardar, self.boton_renombrar, self.boton_quitar,
-                  self.boton_csv, self.boton_guardar_lib):
+                  self.boton_csv, self.boton_guardar_lib,
+                  self.combo_paleta, self.boton_rgb):
             w.setEnabled(activo)
         for deslizador, numero, _ in self.controles_banda.values():
             deslizador.setEnabled(activo)
@@ -379,7 +458,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             self._sincronizar_bandas()
 
     def _realce_elegido(self, *_):
-        self.controller.on_stretch_changed(self.combo_realce.currentData())
+        modo = self.combo_realce.currentData()
+        self.controller.on_stretch_changed(modo)
+        self.cubo.set_modo_realce(modo)
 
     def _banda_cambiada(self, canal, indice):
         """Un deslizador o su casilla se movieron.
@@ -415,10 +496,26 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.grafico.set_marcadores_rgb(self.controller.marcadores_rgb())
 
     def _aplicar_composicion(self, composer):
+        self.cubo.refrescar_frontal()
+        self.cubo.set_marcadores_rgb(self.controller.marcadores_rgb())
         if self.controller.cube is None or self.controller.layer is None:
             return
         aplicar_composicion(self.controller.layer, self.controller.cube,
                             composer)
+
+    def _banda_del_cubo(self, longitud):
+        """Se eligio una banda haciendo clic en un costado del cubo."""
+        cubo = self.controller.cube
+        if cubo is None:
+            return
+        indice = cubo.band_index(longitud)
+        self.banda_frontal.setText(
+            "frente: banda %d (%.1f %s)"
+            % (indice, cubo.wavelengths[indice], cubo.unidad_espectral))
+
+    def _volver_al_rgb(self):
+        self.cubo.set_banda_unica(None)
+        self.banda_frontal.setText("frente: composicion RGB")
 
     # -- lecturas -----------------------------------------------------------
     def _mostrar_pixel(self, x, y):
@@ -558,6 +655,41 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             self._avisar(str(exc))
             return
         self._avisar("Exportado en forma %s: %s" % (forma, ruta))
+
+    # -- disposicion --------------------------------------------------------
+    #: Reparto vertical entre el cubo y el perfil espectral.
+    REPARTO = (0.56, 0.44)
+
+    def _divisor_arrastrado(self, *_):
+        """El usuario movio el divisor: desde aca manda el."""
+        self._usuario_ajusto = True
+
+    def _repartir(self):
+        """Reparte el alto del divisor entre el cubo y el perfil.
+
+        Se rehace en cada cambio de tamano, no una sola vez al mostrarse: en
+        el primer showEvent la geometria todavia no esta asentada y el reparto
+        sale contra un alto que no es el final -que es como el perfil termina
+        en una franja de cien pixeles-. Deja de rehacerse en cuanto el usuario
+        arrastra el divisor, porque a partir de ahi la proporcion la eligio
+        el.
+        """
+        if self._usuario_ajusto:
+            return
+        alto = self._divisor.height()
+        if alto <= 0:
+            return
+        tamanos = [int(alto * f) for f in self.REPARTO]
+        if self._divisor.sizes() != tamanos:
+            self._divisor.setSizes(tamanos)
+
+    def showEvent(self, evento):
+        super(HyperspectralDock, self).showEvent(evento)
+        self._repartir()
+
+    def resizeEvent(self, evento):
+        super(HyperspectralDock, self).resizeEvent(evento)
+        self._repartir()
 
     # -- cierre -------------------------------------------------------------
     def closeEvent(self, evento):

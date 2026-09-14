@@ -169,3 +169,120 @@ def test_cerrar_suelta_las_senales_del_proyecto(panel):
     despues = len(getattr(proyecto.layersAdded, "conectados", []))
     assert despues < antes or antes == 0
     proyecto.layersAdded.emit([])      # no debe reventar
+
+
+# -- enlace con la vista del cubo ---------------------------------------------
+def test_el_cubo_recibe_la_escena_al_abrirla(panel):
+    assert panel.cubo.cube is panel.controller.cube
+    assert panel.cubo._superior is not None
+
+
+def test_un_pixel_del_mapa_mueve_la_cruz_del_cubo(panel):
+    """Las dos vistas senalan el mismo pixel y ninguna conoce a la otra: las
+    dos pasan por el controlador."""
+    panel.controller.on_pixel_changed(4, 6)
+    assert (panel.cubo.x, panel.cubo.y) == (4, 6)
+
+
+def test_arrastrar_en_el_cubo_extrae_el_espectro(panel):
+    """El camino de vuelta. Si esta conexion falta, la cruz se mueve y el
+    grafico no se entera."""
+    panel.cubo.posicionMovida.emit(2, 3)
+    assert panel.controller.pixel == (2, 3)
+    assert len(panel.grafico._curvas) == 1
+
+
+def test_mover_la_cruz_no_entra_en_un_bucle(panel):
+    """cruz -> controlador -> cruz. set_posicion corta cuando no cambia
+    nada; sin eso las dos senales se realimentan."""
+    panel.cubo.posicionMovida.emit(1, 1)
+    assert (panel.cubo.x, panel.cubo.y) == (1, 1)
+    assert panel.controller.pixel == (1, 1)
+
+
+def test_un_clic_en_el_costado_se_reporta_en_el_panel(panel):
+    panel.cubo.longitudElegida.emit(2450.0)
+    assert "banda 8" in panel.banda_frontal.text()
+    assert "2450" in panel.banda_frontal.text()
+
+
+def test_volver_al_rgb_limpia_el_modo_de_banda_unica(panel):
+    panel.cubo.set_banda_unica(3)
+    panel._volver_al_rgb()
+    assert panel.cubo.banda_unica is None
+    assert "composicion RGB" in panel.banda_frontal.text()
+
+
+def test_cambiar_la_paleta_llega_al_cubo(panel):
+    panel.combo_paleta.setCurrentText("viridis")
+    assert panel.cubo.paleta == "viridis"
+
+
+def test_cambiar_el_realce_rehace_el_rango_del_cubo(panel):
+    antes = panel.cubo._rango
+    panel.combo_realce.setCurrentIndex(
+        panel.combo_realce.findData("reflectancia"))
+    panel._realce_elegido()
+    assert panel.cubo._rango == (0.0, 1.0) != antes
+
+
+def test_cambiar_una_banda_mueve_los_marcadores_del_cubo(panel):
+    panel._banda_cambiada("red", 8)
+    assert panel.cubo.marcadores
+    assert panel.cubo.marcadores[0] == pytest.approx(2450.0)
+
+
+def test_cerrar_la_capa_vacia_el_cubo(panel):
+    panel.combo_capa.setCurrentIndex(0)      # "(ninguna)"
+    panel._capa_elegida()
+    assert panel.cubo.cube is None
+
+
+def test_el_alto_se_reparte_siguiendo_al_tamano(app, panel):
+    """En el primer showEvent la geometria no esta asentada: si el reparto se
+    hiciera solo ahi, saldria contra un alto que no es el final y el perfil
+    quedaria en una franja."""
+    ventana = _en_una_ventana(panel, 520, 900)
+    tamanos = panel._divisor.sizes()
+    assert len(tamanos) == 2
+    assert tamanos[0] > tamanos[1] > 80
+    ventana.resize(520, 1300)
+    _asentar(app)
+    assert panel._divisor.sizes()[0] > tamanos[0]
+    ventana.close()
+
+
+def _en_una_ventana(panel, ancho, alto):
+    """El panel es un QDockWidget: sin acoplarlo no recibe showEvent."""
+    from PyQt5.QtCore import Qt
+    ventana = QtWidgets.QMainWindow()
+    ventana.resize(ancho + 8, alto + 8)
+    ventana.addDockWidget(Qt.RightDockWidgetArea, panel)
+    ventana.resizeDocks([panel], [ancho], Qt.Horizontal)
+    ventana.show()
+    _asentar(QtWidgets.QApplication.instance())
+    return ventana
+
+
+def _asentar(app):
+    for _ in range(5):
+        app.processEvents()
+
+
+def test_el_reparto_no_pisa_lo_que_el_usuario_arrastro(app, panel):
+    """En cuanto el usuario arrastra, la proporcion la eligio el y el panel
+    deja de rehacerla."""
+    ventana = _en_una_ventana(panel, 520, 900)
+
+    # Antes de que el usuario toque nada, el panel si reparte.
+    panel._divisor.setSizes([100, 400])
+    panel._repartir()
+    assert panel._divisor.sizes() != [100, 400]
+
+    # Despues de arrastrar, deja de hacerlo.
+    panel._divisor_arrastrado()
+    panel._divisor.setSizes([260, 300])
+    elegido = panel._divisor.sizes()
+    panel._repartir()
+    assert panel._divisor.sizes() == elegido
+    ventana.close()

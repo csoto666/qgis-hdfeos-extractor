@@ -41,6 +41,39 @@ el panel aporta el eje que al lienzo le falta.
 | Arrastrar la **línea Y** | Lo mismo fijando una fila |
 | Arrastrar un **rectángulo** | Firma media del área, con la desviación por banda dibujada como envolvente sombreada |
 | Cambiar **R/G/B** | La capa se recompone al instante, y el gráfico marca sobre el eje espectral dónde caen esas tres bandas |
+| Arrastrar sobre el **cubo** | La cruz recorre la escena y las dos caras laterales cambian con ella |
+| Clic en un **costado del cubo** | Esa banda pasa a la cara frontal |
+
+## El cubo no es una ilustración
+
+La vista clásica del cubo hiperespectral —la imagen al frente y el espectro
+en los costados— aquí no es un adorno: **las caras laterales son los mismos
+transectos que alimentan el gráfico**.
+
+```
+cara superior  = get_transect("y", fila)     → (x, λ)
+cara derecha   = get_transect("x", columna)  → (y, λ)
+```
+
+La diferencia con el cubo de ENVI es que aquel es estático —sus caras son el
+borde de la escena— y este no: **las caras son el corte que pasa por la
+cruz**. Mover la cruz recorre el cubo de verdad. Es la diferencia entre mirar
+un cubo y explorarlo.
+
+Dos cosas más que salen de ahí:
+
+- Las tres bandas que arman la imagen frontal se dibujan **dentro** de las
+  caras, así que se ve de qué rebanadas está hecho lo que se está mirando.
+- Un clic en un costado lleva esa banda al frente. Es el gesto natural
+  frente a un cubo —se ve una franja rara y uno quiere ver esa banda— y en
+  ENVI hay que ir a otro diálogo, elegir el número y abrir otra ventana.
+
+No hay OpenGL ni biblioteca 3D. La proyección es oblicua y se dibuja con
+QPainter aplicando una transformación afín a cada cara. Para tres caras
+alcanza de sobra, y mantiene la regla del proyecto.
+
+Las bandas malas salen como franjas negras, igual que en ENVI: un hueco
+tiene que parecer un hueco.
 
 ### La composición RGB se elige por longitud de onda
 
@@ -90,6 +123,7 @@ core/
   cube.py      HyperspectralCube: la API con dimensiones nombradas
   geo.py       conversión mapa ↔ píxel
   rgb.py       composición y realce
+  colormap.py  paletas para pintar un plano del cubo
   spectral.py  firmas, estadísticas, ángulo espectral
   library.py   biblioteca persistente
 ```
@@ -117,6 +151,7 @@ dos incluidos.
 | Paquete | Para qué | Si falta |
 |---|---|---|
 | `pyqtgraph` | Gráfico espectral con zoom y desplazamiento | Un lienzo propio dibuja lo mismo con QPainter |
+| — | La vista del cubo | No necesita nada: QPainter y numpy |
 | `xarray` | `cube.to_xarray()` | Solo falla esa función; el resto no lo usa |
 | `rasterio` | — | No se usa. GDAL hace lo mismo y sí viene con QGIS |
 
@@ -176,9 +211,14 @@ Versión experimental. Lo que funciona es el hito que valida el concepto:
 abrir un cubo, componer, hacer clic, ver el espectro, recorrer X e Y, y
 guardar firmas.
 
+El cubo llegó después del enlace 2D/1D y no antes, que es el orden que el
+documento de diseño pide: una vez que la relación X/Y ↔ espectro funciona, el
+cubo es una extensión de ese enlace y no su fundamento.
+
 Queda para después, en este orden: índices espectrales, remoción del
-continuo, PCA, endmembers, clasificación, y recién entonces la visualización
-3D y N-D —que es una extensión de este enlace, no su fundamento—.
+continuo, PCA, endmembers, clasificación, y después la exploración N-D —tiempo
+como cuarta dimensión, que es para lo que el modelo de datos ya está
+preparado—.
 
 ## Pruebas
 

@@ -169,3 +169,40 @@ def test_una_firma_plana_no_se_dibuja_sobre_el_borde(app):
     _, _, y0, y1 = g._grafico.limites()
     assert y1 > y0
     assert y0 < 0.01 < y1
+
+
+def test_el_rotulo_del_eje_y_no_se_corta_en_un_panel_bajo(app):
+    """Con un rectangulo de largo fijo, en un dock angosto el texto sale
+    partido -"ectancia"- en vez de encogerse."""
+    from PyQt5 import QtGui, QtCore
+    g = SpectralPlot(forzar_lienzo=True)
+    g.set_curvas([Curva("a", [400.0, 900.0], [0.1, 0.4])])
+    for alto in (90, 400):
+        g._grafico.resize(360, alto)
+        pix = QtGui.QPixmap(360, alto)
+        pix.fill(QtGui.QColor("white"))
+        g._grafico.render(pix, QtCore.QPoint(),
+                          QtGui.QRegion(g._grafico.rect()))
+        assert not pix.isNull()
+    # El rectangulo del rotulo sigue al alto del area de dibujo.
+    assert g._grafico._area().height() > 0
+
+
+def test_la_cantidad_de_marcas_se_adapta_al_espacio():
+    """Seis etiquetas en un eje de setenta pixeles se pisan y no se lee
+    ninguna."""
+    from hyperspectral_explorer.vista.spectral_plot import _cuantas
+    assert _cuantas(70, 34) == 2
+    assert _cuantas(600, 95) == 6
+    assert _cuantas(10, 34) == 2          # nunca menos de dos
+
+
+def test_pyqtgraph_no_reescala_los_ejes(app):
+    """pyqtgraph reescala solo y agrega un prefijo SI al rotulo: en un eje de
+    reflectancia eso pone "200" donde el valor es 0.2."""
+    pytest.importorskip("pyqtgraph")
+    g = SpectralPlot()
+    if not g.usa_pyqtgraph:
+        pytest.skip("pyqtgraph no quedo activo")
+    for lado in ("left", "bottom"):
+        assert not g._grafico.getPlotItem().getAxis(lado).autoSIPrefix
