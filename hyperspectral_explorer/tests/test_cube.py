@@ -223,10 +223,10 @@ def test_from_array_y_dims(memoria, datos):
 
 
 def test_to_xarray_avisa_cuando_falta_xarray(memoria):
-    pytest.importorskip
-    try:
-        import xarray                     # noqa: F401
-    except ImportError:
+    """to_xarray() es lo unico del nucleo que pide un paquete de fuera, y
+    tiene que decirlo con claridad en vez de soltar un ImportError."""
+    import importlib.util
+    if importlib.util.find_spec("xarray") is None:
         with pytest.raises(CubeError, match="xarray"):
             memoria.to_xarray()
     else:

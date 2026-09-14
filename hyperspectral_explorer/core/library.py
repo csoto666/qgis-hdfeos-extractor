@@ -148,7 +148,10 @@ class SpectralLibrary(object):
         return sorted(salida, key=lambda par: par[1])
 
     def match(self, firma):
-        """La firma mas parecida y su angulo, o None si no hay con que comparar."""
+        """La firma mas parecida y su angulo.
+
+        None si la biblioteca no tiene con que comparar.
+        """
         orden = self.compare_all(firma)
         return orden[0] if orden else None
 

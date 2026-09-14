@@ -128,6 +128,16 @@ querés subirlo o bajarlo.
 
 Los productos `ortho` ya vienen proyectados y no necesitan el IGM.
 
+## También en este repositorio
+
+`hyperspectral_explorer/` es un segundo plugin, **experimental y separado**:
+[Hyperspectral Explorer](hyperspectral_explorer/README.md), un explorador
+espacial-espectral que enlaza en tiempo real la posición de un píxel, la
+imagen y su firma espectral.
+
+Los dos plugins se encadenan —este extrae el cubo a ENVI, aquel lo explora—
+pero son independientes: se instalan por separado y ninguno necesita al otro.
+
 ## Licencia
 
 GNU GPL v2 o posterior. Ver [LICENSE](LICENSE).

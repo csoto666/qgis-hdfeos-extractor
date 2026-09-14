@@ -51,6 +51,29 @@ PERCENTILES = (2.0, 98.0)
 MODOS = ("percentil", "minmax", "reflectancia", "desviacion")
 
 
+def limites(banda, modo="percentil", percentiles=PERCENTILES, sigmas=2.0):
+    """Devuelve el par (lo, hi) con el que ``estirar`` lleva la banda a 0..1.
+
+    Esta separado del estiramiento porque QGIS no necesita la imagen: le basta
+    con el minimo y el maximo para configurar su propio realce sobre la capa
+    raster. Asi la imagen del mapa y el grafico usan exactamente el mismo
+    criterio, en vez de dos realces parecidos que no coinciden.
+    """
+    datos = np.asarray(banda, dtype=np.float32)
+    muestra = datos[np.isfinite(datos)]
+    if muestra.size == 0:
+        return 0.0, 1.0
+    if modo == "minmax":
+        return float(muestra.min()), float(muestra.max())
+    if modo == "reflectancia":
+        return 0.0, 1.0
+    if modo == "desviacion":
+        media, sigma = float(muestra.mean()), float(muestra.std())
+        return media - sigmas * sigma, media + sigmas * sigma
+    lo, hi = np.percentile(muestra, percentiles)
+    return float(lo), float(hi)
+
+
 def estirar(banda, modo="percentil", percentiles=PERCENTILES, sigmas=2.0):
     """Lleva una banda a 0..1 para poder dibujarla.
 
@@ -72,17 +95,7 @@ def estirar(banda, modo="percentil", percentiles=PERCENTILES, sigmas=2.0):
     if not validos.any():
         return np.zeros(datos.shape, dtype=np.float32)
 
-    muestra = datos[validos]
-    if modo == "minmax":
-        lo, hi = float(muestra.min()), float(muestra.max())
-    elif modo == "reflectancia":
-        lo, hi = 0.0, 1.0
-    elif modo == "desviacion":
-        media, sigma = float(muestra.mean()), float(muestra.std())
-        lo, hi = media - sigmas * sigma, media + sigmas * sigma
-    else:
-        lo, hi = [float(v) for v in np.percentile(muestra, percentiles)]
-
+    lo, hi = limites(datos, modo, percentiles, sigmas)
     if hi <= lo:
         # Banda constante: no hay contraste que estirar. Gris medio es mas
         # honesto que un negro o un blanco que sugieren estructura.

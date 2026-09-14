@@ -10,7 +10,7 @@ xarray se usan si estan y no se exigen.
 from .cube import CubeError, HyperspectralCube
 from .envi import EnviError, EnviHeader, EnviSource
 from .library import LibraryError, SpectralLibrary
-from .rgb import PRESETS, RGBComposer, estirar
+from .rgb import PRESETS, RGBComposer, estirar, limites
 from .sources import GdalSource, MemorySource
 from .spectral import (Signature, SpectralProfile, signature_from_pixel,
                        signature_from_pixels, signature_from_roi,
@@ -20,7 +20,7 @@ __all__ = [
     "CubeError", "HyperspectralCube",
     "EnviError", "EnviHeader", "EnviSource",
     "GdalSource", "MemorySource",
-    "PRESETS", "RGBComposer", "estirar",
+    "PRESETS", "RGBComposer", "estirar", "limites",
     "Signature", "SpectralProfile", "signature_from_pixel",
     "signature_from_pixels", "signature_from_roi", "spectral_angle",
     "statistics",

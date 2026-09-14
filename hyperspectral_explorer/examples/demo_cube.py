@@ -39,12 +39,14 @@ import tempfile
 
 import numpy as np
 
+# La ruta se arregla antes de importar el paquete, para que el ejemplo corra
+# desde una copia del repositorio sin instalar nada.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from hyperspectral_explorer.core import (HyperspectralCube, RGBComposer,
-                                         SpectralLibrary, signature_from_pixel,
-                                         signature_from_roi, spectral_angle)
+from hyperspectral_explorer.core import (  # noqa: E402
+    HyperspectralCube, RGBComposer, SpectralLibrary, signature_from_pixel,
+    signature_from_roi, spectral_angle)
 
 LINEAS, MUESTRAS, BANDAS = 120, 160, 120
 LONGITUDES = np.linspace(400.0, 2450.0, BANDAS)
@@ -54,7 +56,7 @@ LONGITUDES = np.linspace(400.0, 2450.0, BANDAS)
 #  Escena sintetica
 # -----------------------------------------------------------------------------
 def firma_vegetacion(wl):
-    """Verde bajo, borde rojo marcado hacia 700 nm, meseta NIR, caidas de agua."""
+    """Verde bajo, borde rojo hacia 700 nm, meseta NIR y caidas de agua."""
     curva = np.full_like(wl, 0.03)
     curva += 0.06 * np.exp(-((wl - 550.0) / 40.0) ** 2)       # pico verde
     curva += 0.42 / (1.0 + np.exp(-(wl - 720.0) / 18.0))      # borde rojo
@@ -78,7 +80,7 @@ def firma_agua(wl):
 
 
 def escena_sintetica():
-    """Devuelve (cubo, mapa_de_clases). Un rio en diagonal y un parche de suelo."""
+    """Devuelve (cubo, clases): un rio en diagonal y un parche de suelo."""
     y, x = np.mgrid[0:LINEAS, 0:MUESTRAS]
     clases = np.zeros((LINEAS, MUESTRAS), dtype=np.uint8)      # 0 vegetacion
     clases[np.abs(y - 0.6 * x - 10) < 7] = 2                   # 2 agua

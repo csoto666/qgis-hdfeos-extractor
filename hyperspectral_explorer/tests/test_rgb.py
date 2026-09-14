@@ -179,3 +179,28 @@ def test_la_vista_previa_sale_mas_chica_pero_igual_de_valida():
     assert completa.shape == (60, 40, 3)
     assert max(previa.shape[:2]) <= 20
     assert previa.dtype == np.uint8
+
+
+# -- limites compartidos con QGIS ---------------------------------------------
+def test_los_limites_son_los_que_usa_el_estiramiento():
+    """QGIS realza la capa con su propio motor; para que el mapa y el grafico
+    coincidan tienen que partir del mismo par (lo, hi)."""
+    from hyperspectral_explorer.core.rgb import limites
+    rng = np.random.default_rng(3)
+    banda = rng.normal(0.3, 0.1, (30, 30)).astype(np.float32)
+    for modo in ("percentil", "minmax", "reflectancia", "desviacion"):
+        lo, hi = limites(banda, modo)
+        estirada = estirar(banda, modo)
+        centro = (lo + hi) / 2.0
+        esperado = np.clip((centro - lo) / (hi - lo), 0.0, 1.0)
+        # El punto medio del rango tiene que caer en 0.5 del estiramiento.
+        i = int(np.argmin(np.abs(banda - centro)))
+        y, x = np.unravel_index(i, banda.shape)
+        real = (banda[y, x] - lo) / (hi - lo)
+        assert estirada[y, x] == pytest.approx(np.clip(real, 0, 1), abs=1e-5)
+        assert esperado == pytest.approx(0.5)
+
+
+def test_los_limites_de_una_banda_toda_nan_son_neutros():
+    from hyperspectral_explorer.core.rgb import limites
+    assert limites(np.full((3, 3), np.nan, dtype=np.float32)) == (0.0, 1.0)

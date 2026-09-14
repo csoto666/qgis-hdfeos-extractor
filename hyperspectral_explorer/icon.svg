@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hyperspectral Explorer. El cubo de datos y, saliendo de un pixel, la
+     curva espectral: la idea entera del plugin en un dibujo. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="cara" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d8bcd"/>
+      <stop offset="1" stop-color="#1f5f96"/>
+    </linearGradient>
+  </defs>
+  <!-- cara superior -->
+  <path d="M6 18 L28 6 L58 16 L36 28 Z" fill="#7fb8e6"/>
+  <!-- cara frontal -->
+  <path d="M6 18 L36 28 L36 58 L6 46 Z" fill="url(#cara)"/>
+  <!-- cara lateral -->
+  <path d="M36 28 L58 16 L58 44 L36 58 Z" fill="#17466f"/>
+  <!-- el pixel elegido -->
+  <path d="M15 27 L23 30 L23 38 L15 35 Z" fill="#ffdc00" stroke="#a37f00" stroke-width="1"/>
+  <!-- la curva espectral que sale de ese pixel -->
+  <path d="M23 47 L30 46 L34 44 L37 32 L44 29 L48 30 L50 37 L53 31 L57 30"
+        fill="none" stroke="#ffffff" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M23 47 L30 46 L34 44 L37 32 L44 29 L48 30 L50 37 L53 31 L57 30"
+        fill="none" stroke="#d62728" stroke-width="1.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
