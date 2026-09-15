@@ -37,6 +37,7 @@ mapa, renderizador de la capa- vive en los otros modulos de este paquete.
 import numpy as np
 
 from ..core.geo import GeoTransform
+from ..core.georef import Georreferencia
 from ..core.library import SpectralLibrary
 from ..core.rgb import RGBComposer
 from ..core.spectral import (SpectralProfile, signature_from_pixel,
@@ -70,6 +71,7 @@ class SpatialSpectralController(QtCore.QObject):
         super(SpatialSpectralController, self).__init__(parent)
         self.cube = None
         self.layer = None
+        self.georref = Georreferencia.ninguna()
         self.geo = GeoTransform.identidad()
         self.composer = RGBComposer()
         self.profile = SpectralProfile()
@@ -81,7 +83,7 @@ class SpatialSpectralController(QtCore.QObject):
         self._resumen_transecto = None
 
     # -- cubo ---------------------------------------------------------------
-    def set_cube(self, cube, layer=None, geo=None):
+    def set_cube(self, cube, layer=None, georref=None):
         """Cambia el cubo activo y reinicia lo que dependia del anterior.
 
         Las firmas en pantalla se borran y las de la biblioteca no. Es la
@@ -92,12 +94,24 @@ class SpatialSpectralController(QtCore.QObject):
         El cubo anterior se cierra. Sin eso su memoria mapeada queda viva
         mientras el usuario abra escenas, y en Windows el archivo sigue
         bloqueado: no se puede mover ni reescribir desde QGIS.
+
+        ``georref`` es la georreferencia del nucleo. Cuando no se pasa se le
+        pregunta al propio cubo, que es lo correcto: la del archivo conserva
+        la rotacion y la rejilla de lat/lon, y la que se deducia de la capa
+        de QGIS no conserva ninguna de las dos.
         """
         if self.cube is not None and self.cube is not cube:
             self.cube.close()
         self.cube = cube
         self.layer = layer
-        self.geo = geo or GeoTransform.identidad()
+        if georref is None:
+            georref = (cube.georreferencia if cube is not None
+                       else Georreferencia.ninguna())
+        self.georref = georref
+        # La afin es para la herramienta de mapa -convertir un clic en un
+        # pixel-. Con una escena en geometria de sensor es un ajuste y no una
+        # equivalencia; el envio al mapa no la usa, usa los puntos de control.
+        self.geo = georref.transformacion
         self.profile = SpectralProfile(cube)
         self.pixel = None
         self.transecto = None

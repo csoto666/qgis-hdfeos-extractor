@@ -34,7 +34,7 @@ import os
 from qgis.core import QgsProject, QgsRasterLayer
 
 from ..core.cube import CubeError, HyperspectralCube
-from ..core.geo import GeoError, GeoTransform
+from ..core.georef import Georreferencia
 from ..core.hdf5 import Hdf5Source
 from ..core.library import LibraryError, SpectralLibrary
 from ..core.bandas import formatear_rangos, parsear_rangos
@@ -68,6 +68,46 @@ ALGORITMO_EXTRAER = "hdfeos_extractor:extraer_hdfeos_a_envi"
 
 
 TITULO = "Hyperspectral Explorer"
+
+
+def georreferencia_de(cubo, capa):
+    """De donde saca la escena sus coordenadas, en orden de confianza.
+
+    Primero el archivo. Solo si el archivo no dice nada se recurre a la capa
+    de QGIS, y ese camino es un ultimo recurso declarado: la extension de una
+    capa es la caja que envuelve la escena, asi que con una escena rotada da
+    un origen y un tamano de pixel que no son los suyos. Preferir el archivo
+    es todo el arreglo del problema de proyeccion.
+    """
+    propia = cubo.georreferencia if cubo is not None else None
+    if propia is not None and propia.tiene_mapa:
+        return propia
+    if capa is not None:
+        de_capa = Georreferencia.de_capa(capa)
+        if de_capa.tiene_mapa:
+            return de_capa
+    return propia if propia is not None else Georreferencia.ninguna()
+
+
+def _aviso_de_georreferencia(georref):
+    """Lo que hay que decirle al usuario sobre donde quedo la capa."""
+    if georref.necesita_remuestreo:
+        return ("La escena viene en geometria de sensor: la vista se "
+                "reproyecto con los puntos de control del producto (%s). "
+                "Los pixeles se remuestrearon, asi que sirve para ubicar y "
+                "digitalizar, no para medir." % (georref.nombre_src or "-"))
+    if not georref.tiene_mapa:
+        return ("Sin georreferencia: la escena no dice donde esta, asi que "
+                "la capa queda en coordenadas de pixel y no se alineara con "
+                "otras. %s" % georref.nota)
+    if not georref.tiene_src:
+        return ("La escena trae coordenadas pero no dice en que sistema: la "
+                "capa sale sin SRC y hay que asignarselo a mano. %s"
+                % georref.nota)
+    aviso = "Georreferencia: %s." % georref.describir()
+    if georref.nota:
+        aviso += " " + georref.nota
+    return aviso
 
 
 class HyperspectralDock(QtWidgets.QDockWidget):
@@ -448,12 +488,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             self.controller.close_cube()
             self._habilitar(False)
             return
-        try:
-            geo = (GeoTransform.from_layer(capa) if capa is not None
-                   else GeoTransform.identidad())
-        except GeoError:
-            geo = GeoTransform.identidad()
-        self.controller.set_cube(cubo, capa, geo)
+        self.controller.set_cube(cubo, capa, georreferencia_de(cubo, capa))
         self.cubo.set_cube(cubo, self.controller.composer)
         self.cubo.unidad = ("reflectancia" if cubo.scale or cubo.aplicar_escala
                             else "valor")
@@ -467,6 +502,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             % (cubo.name, cubo.samples, cubo.lines, cubo.bands,
                cubo.wavelengths[0], cubo.wavelengths[-1],
                cubo.unidad_espectral))
+        self.estado.setText(
+            self.estado.text() + "\n" + self.controller.georref.describir())
         if capa is None:
             if self.es_hdf5_abierto():
                 self.estado.setText(
@@ -532,14 +569,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         if cubo is None or cubo.cerrado:
             self._avisar("Primero abra una escena")
             return
-        capa_origen = self.controller.layer
-        wkt = None
-        if capa_origen is not None and capa_origen.crs().isValid():
-            wkt = capa_origen.crs().toWkt()
+        georref = self.controller.georref
         try:
             ruta, nombre = enviar_vista(
-                cubo, self.controller.composer, self.cubo.ventana(),
-                self.controller.geo, wkt)
+                cubo, self.controller.composer, self.cubo.ventana(), georref)
         except (ErrorExportar, OSError) as exc:
             self._avisar("No se pudo escribir la vista: %s" % exc)
             return
@@ -548,12 +581,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             self._avisar("QGIS no pudo abrir la imagen escrita en %s" % ruta)
             return
         QgsProject.instance().addMapLayer(capa)
-        aviso = "Vista enviada al mapa: %s" % nombre
-        if wkt is None:
-            aviso += ("\nSin sistema de referencia: la escena no esta "
-                      "georreferenciada, asi que la capa no se alineara con "
-                      "otras.")
-        self._avisar(aviso)
+        self._avisar("Vista enviada al mapa: %s\n%s"
+                     % (nombre, _aviso_de_georreferencia(georref)))
 
     def _activar_herramienta(self):
         if self.herramienta is None:

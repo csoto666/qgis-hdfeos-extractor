@@ -20,17 +20,36 @@ class Senal(object):
 
 
 class Crs(object):
+    """SRC de mentira. ``valido`` existe para poder probar el camino en que
+    QGIS no reconoce lo que la escena declara."""
+
+    def __init__(self, wkt=None, epsg=None, valido=True):
+        self._wkt = wkt or 'PROJCS["WGS 84 / UTM zone 19S"]'
+        self._epsg = epsg
+        self._valido = valido
+
     def isValid(self):
-        return True
+        return self._valido
 
     def authid(self):
-        return "EPSG:32619"
+        return "EPSG:%d" % self._epsg if self._epsg else "EPSG:32619"
 
     def toWkt(self):
-        return 'PROJCS["WGS 84 / UTM zone 19S"]'   # basta para pasarlo a GDAL
+        return self._wkt
 
     def __eq__(self, otro):
         return True
+
+
+class QgsCoordinateReferenceSystem(Crs):
+    @staticmethod
+    def fromWkt(wkt):
+        return QgsCoordinateReferenceSystem(wkt=wkt, valido=bool(wkt))
+
+    @staticmethod
+    def fromEpsgId(codigo):
+        return QgsCoordinateReferenceSystem(epsg=int(codigo),
+                                            valido=bool(codigo))
 
 
 class Extent(object):

@@ -323,6 +323,18 @@ class EnviSource(object):
     def escala_reflectancia(self):
         return self.cabecera.escala_reflectancia
 
+    @property
+    def georreferencia(self):
+        """Lo que la cabecera diga de ``map info``; nunca una suposicion.
+
+        Se resuelve cada vez en vez de guardarse en el constructor porque es
+        barato -son siete numeros de un campo de texto- y porque asi una
+        cabecera corregida en disco se refleja al reabrir sin caches raros
+        de por medio.
+        """
+        from .georef import Georreferencia
+        return Georreferencia.de_envi(self.cabecera.campos)
+
     # -- lecturas -----------------------------------------------------------
     def read_pixel(self, y, x):
         """Espectro completo de un pixel: vector de largo ``bandas``."""

@@ -33,7 +33,8 @@ desaparecen al desactivar la herramienta.
 
 import time
 
-from qgis.core import (QgsCoordinateTransform, QgsGeometry, QgsPointXY,
+from qgis.core import (QgsCoordinateReferenceSystem,
+                       QgsCoordinateTransform, QgsGeometry, QgsPointXY,
                        QgsProject, QgsWkbTypes)
 from qgis.gui import QgsMapTool, QgsRubberBand
 
@@ -119,10 +120,9 @@ class HerramientaExplorar(QgsMapTool):
         if self.controller.cube is None:
             return None
         punto = self.toMapCoordinates(evento.pos())
-        capa = self.controller.layer
-        if capa is not None:
+        destino = self._crs_escena()
+        if destino is not None:
             origen = self.canvas.mapSettings().destinationCrs()
-            destino = capa.crs()
             if origen.isValid() and destino.isValid() and origen != destino:
                 try:
                     transformacion = QgsCoordinateTransform(
@@ -137,18 +137,38 @@ class HerramientaExplorar(QgsMapTool):
             return None
         return col, fila
 
+    def _crs_escena(self):
+        """SRC en que estan las coordenadas que devuelve ``controller.geo``.
+
+        Se pregunta a la georreferencia y no a la capa. Con un HDF-EOS5
+        abierto directo no hay capa, y sus coordenadas salen en geograficas:
+        dar por hecho que ya estan en el SRC del lienzo pone la marca del
+        pixel a miles de kilometros en cuanto el proyecto esta en UTM.
+        """
+        georref = getattr(self.controller, "georref", None)
+        if georref is not None:
+            if georref.wkt:
+                crs = QgsCoordinateReferenceSystem.fromWkt(georref.wkt)
+                if crs.isValid():
+                    return crs
+            if georref.epsg:
+                crs = QgsCoordinateReferenceSystem.fromEpsgId(georref.epsg)
+                if crs.isValid():
+                    return crs
+        capa = self.controller.layer
+        return capa.crs() if capa is not None else None
+
     def _reproyectar(self, mx, my):
-        """Punto en el SRC de la capa -> punto en el SRC del lienzo.
+        """Punto en el SRC de la escena -> punto en el SRC del lienzo.
 
         El reves de lo que hace ``_a_pixel``, y por el mismo motivo: si el
         proyecto esta en otro SRC, la marca del pixel se dibujaria lejos del
         pixel que representa.
         """
         punto = QgsPointXY(mx, my)
-        capa = self.controller.layer
-        if capa is None:
+        origen = self._crs_escena()
+        if origen is None:
             return punto
-        origen = capa.crs()
         destino = self.canvas.mapSettings().destinationCrs()
         if origen.isValid() and destino.isValid() and origen != destino:
             try:

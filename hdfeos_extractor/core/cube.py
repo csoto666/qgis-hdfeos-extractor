@@ -158,6 +158,22 @@ class HyperspectralCube(object):
         return np.asarray(wl, dtype=np.float64)
 
     @property
+    def georreferencia(self):
+        """Donde esta la escena, segun el propio archivo.
+
+        Va por la fuente y no por la capa de QGIS a proposito. La capa solo
+        sabe su caja envolvente; el archivo sabe la geotransformacion
+        completa -rotacion incluida- o la rejilla de lat/lon, que es lo unico
+        con que se puede poner una escena de sensor en el lugar correcto.
+        """
+        from .georef import Georreferencia
+        fuente = self.source
+        if fuente is None:
+            return Georreferencia.ninguna(nota="el cubo esta cerrado")
+        georref = getattr(fuente, "georreferencia", None)
+        return georref if georref is not None else Georreferencia.ninguna()
+
+    @property
     def cerrado(self):
         return self.source is None
 

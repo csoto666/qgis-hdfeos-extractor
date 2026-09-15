@@ -76,6 +76,13 @@ class MemorySource(object):
     def shape(self):
         return self.datos.shape
 
+    @property
+    def georreferencia(self):
+        """Un array en memoria no esta en ninguna parte del planeta."""
+        from .georef import Georreferencia
+        return Georreferencia.ninguna(
+            nota="el cubo viene de un array en memoria, sin coordenadas")
+
     def read_pixel(self, y, x):
         return self.datos[y, x, :]
 
@@ -165,6 +172,17 @@ class GdalSource(object):
     @property
     def shape(self):
         return (self.ds.RasterYSize, self.ds.RasterXSize, self.bandas)
+
+    @property
+    def georreferencia(self):
+        """La que traiga el archivo: geotransformacion, o puntos de control.
+
+        Se pregunta a GDAL en vez de deducirla de la extension. GDAL conserva
+        los terminos de rotacion, y un GeoTIFF producido a partir de una
+        escena sin ortorectificar los trae.
+        """
+        from .georef import Georreferencia
+        return Georreferencia.de_gdal(self.ds)
 
     def _leer(self, banda, x0, y0, ancho, alto):
         crudo = self.ds.GetRasterBand(banda).ReadRaster(

@@ -79,11 +79,46 @@ class Hdf5Source(object):
         self.bbl = (None if self.escena.buenas is None
                     else np.asarray(self.escena.buenas).astype(bool))
         self.nombres_banda = None
+        self._georref = None
 
     @property
     def shape(self):
         """(lineas, muestras, bandas). El HDF5 las guarda al reves."""
         return (self.escena.lineas, self.escena.muestras, self.escena.bandas)
+
+    @property
+    def georreferencia(self):
+        """Puntos de control desde las capas de latitud y longitud.
+
+        Un producto en geometria de sensor no tiene geotransformacion y no
+        se le puede inventar una: la relacion entre pixel y terreno cambia a
+        lo ancho de la franja. Lo que si tiene son dos capas del tamano de
+        la escena con la coordenada de cada pixel, y de ahi sale una rejilla
+        de puntos de control con la que se puede remuestrear de verdad.
+
+        Se lee una sola vez y se guarda: son dos arrays del tamano de la
+        escena y en HDF5 vienen comprimidos, asi que no conviene releerlos
+        cada vez que alguien pregunte donde esta la escena.
+        """
+        if self._georref is None:
+            self._georref = self._leer_georreferencia()
+        return self._georref
+
+    def _leer_georreferencia(self):
+        from .georef import Georreferencia
+        if self.escena is None:
+            return Georreferencia.ninguna(nota="el cubo ya esta cerrado")
+        try:
+            ruta_lon, ruta_lat = self.escena.hallar_geolocalizacion()
+            if not (ruta_lon and ruta_lat):
+                return Georreferencia.ninguna(
+                    nota="el producto no trae capas de latitud y longitud")
+            lon = self.backend.leer_todo(ruta_lon)
+            lat = self.backend.leer_todo(ruta_lat)
+        except (ErrorLectura, OSError, KeyError, ValueError) as exc:
+            return Georreferencia.ninguna(
+                nota="no se pudieron leer las capas de lat/lon: %s" % exc)
+        return Georreferencia.de_rejilla(lon, lat)
 
     # -- lecturas -----------------------------------------------------------
     def _convertir(self, crudo):
