@@ -293,7 +293,8 @@ sigue yendo al dato original, a resolución completa.
 ## Pruebas
 
 ```sh
-python3 -m pytest
+./verificar.sh     # pruebas, estilo y demo: lo mismo que corre el CI
+python3 -m pytest  # sólo las pruebas
 ```
 
 Corren también en cada empujón a GitHub, en **Python 3.9 y 3.12**. El 3.9 está

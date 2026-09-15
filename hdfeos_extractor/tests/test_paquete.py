@@ -103,8 +103,8 @@ def test_classfactory_esta_donde_QGIS_lo_busca(zip_construido):
 def test_la_version_del_zip_es_la_del_metadata(zip_construido):
     with zipfile.ZipFile(zip_construido) as z:
         meta = z.read(PAQUETE + "/metadata.txt").decode("utf-8")
-    version = [l.split("=", 1)[1].strip() for l in meta.splitlines()
-               if l.startswith("version=")][0]
+    version = [linea.split("=", 1)[1].strip() for linea in meta.splitlines()
+               if linea.startswith("version=")][0]
     assert os.path.basename(zip_construido) == "%s-%s.zip" % (PAQUETE,
                                                               version)
 

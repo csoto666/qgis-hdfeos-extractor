@@ -53,22 +53,12 @@ jobs:
               print("%-10s %s" % (m, "si" if u.find_spec(m) else "NO"))
           PY
 
-      - name: Pruebas
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
-
-      - name: Estilo
-        run: |
-          python -m pyflakes hdfeos_extractor
-          python -m pycodestyle --max-line-length=80 \
-            hdfeos_extractor/core hdfeos_extractor/vista \
-            hdfeos_extractor/qgis_ui hdfeos_extractor/examples
-          python -m pycodestyle --max-line-length=80 --ignore=E402 \
-            hdfeos_extractor/tests
-
-      - name: La demo corre de punta a punta
-        run: python hdfeos_extractor/examples/demo_cube.py
+      # Se llama al mismo script que se corre a mano antes de empujar. Con
+      # los comandos escritos dos veces se separan en un dia: asi paso la
+      # primera vez, y el CI encontro un fallo de estilo que la comprobacion
+      # local, escrita de memoria con otros argumentos, no miraba.
+      - name: Pruebas, estilo y demo
+        run: ./verificar.sh
 
   paquete:
     # El ZIP se arma y se revisa en cada empujon, no solo al publicar. Un ZIP
