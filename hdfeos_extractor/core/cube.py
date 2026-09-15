@@ -157,6 +157,23 @@ class HyperspectralCube(object):
         self.has_wavelengths = True
         return np.asarray(wl, dtype=np.float64)
 
+    @property
+    def cerrado(self):
+        return self.source is None
+
+    def _asegurar_abierto(self):
+        """Falla con un mensaje util si alguien lee un cubo ya cerrado.
+
+        Sin esto el sintoma es
+        "AttributeError: 'NoneType' object has no attribute 'read_band'",
+        varias llamadas mas abajo, y no dice nada de lo que de verdad paso:
+        que una vista quedo apuntando a un cubo que el controlador ya cerro.
+        """
+        if self.cerrado:
+            raise CubeError(
+                "El cubo '%s' ya esta cerrado: alguna vista quedo apuntando "
+                "a el despues de cerrarlo" % self.name)
+
     # -- eje espectral ------------------------------------------------------
     @property
     def wavelengths(self):
@@ -227,6 +244,7 @@ class HyperspectralCube(object):
         Esta es la operacion central del plugin. Un pixel no es un pixel: es
         un espectro.
         """
+        self._asegurar_abierto()
         x, y = int(x), int(y)
         if not (0 <= x < self.samples and 0 <= y < self.lines):
             raise CubeError("Pixel (%d, %d) fuera de la imagen %dx%d"
@@ -245,6 +263,7 @@ class HyperspectralCube(object):
         El cache es lo que hace que mover los selectores R/G/B se sienta
         instantaneo: volver a una banda ya vista no toca el disco.
         """
+        self._asegurar_abierto()
         b = self._resolver_banda(wavelength, index)
         if b in self._cache:
             self._cache.move_to_end(b)
@@ -268,6 +287,7 @@ class HyperspectralCube(object):
         la imagen y ver como responde el espectro es la relacion que el
         usuario no puede ver en un visor comun.
         """
+        self._asegurar_abierto()
         eje = str(axis).lower()
         p = int(position)
         if eje == "x":
@@ -299,6 +319,7 @@ class HyperspectralCube(object):
         el boton, que puede ser la esquina inferior derecha, y puede salirse
         del borde.
         """
+        self._asegurar_abierto()
         x0, x1 = sorted((int(x0), int(x1)))
         y0, y1 = sorted((int(y0), int(y1)))
         x0 = max(0, x0)

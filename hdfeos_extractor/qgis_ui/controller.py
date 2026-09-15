@@ -88,7 +88,13 @@ class SpatialSpectralController(QtCore.QObject):
         distincion que separa las dos colecciones: el grafico muestra lo que
         se esta mirando ahora, la biblioteca guarda lo que el usuario decidio
         conservar, que es justamente lo que sirve para comparar entre escenas.
+
+        El cubo anterior se cierra. Sin eso su memoria mapeada queda viva
+        mientras el usuario abra escenas, y en Windows el archivo sigue
+        bloqueado: no se puede mover ni reescribir desde QGIS.
         """
+        if self.cube is not None and self.cube is not cube:
+            self.cube.close()
         self.cube = cube
         self.layer = layer
         self.geo = geo or GeoTransform.identidad()

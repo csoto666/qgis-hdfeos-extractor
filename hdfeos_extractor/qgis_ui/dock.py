@@ -632,12 +632,19 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.grafico.set_marcadores_rgb(self.controller.marcadores_rgb())
 
     def _aplicar_composicion(self, composer):
+        cubo = self.controller.cube
+        # Esta senal llega tambien cuando el cubo se acaba de cerrar -al
+        # cambiar de capa o al vaciar la seleccion-, y entonces no hay nada
+        # que recomponer. Preguntar es mas barato que coordinar el orden
+        # exacto en que se enteran las cinco vistas.
+        if cubo is None or cubo.cerrado:
+            self.cubo.refrescar_frontal()
+            return
         self.cubo.refrescar_frontal()
         self.cubo.set_marcadores_rgb(self.controller.marcadores_rgb())
-        if self.controller.cube is None or self.controller.layer is None:
+        if self.controller.layer is None:
             return
-        aplicar_composicion(self.controller.layer, self.controller.cube,
-                            composer)
+        aplicar_composicion(self.controller.layer, cubo, composer)
 
     def _banda_del_cubo(self, longitud):
         """Se eligio una banda haciendo clic en un costado del cubo."""

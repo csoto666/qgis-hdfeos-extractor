@@ -237,9 +237,60 @@ def test_cambiar_una_banda_mueve_los_marcadores_del_cubo(panel):
 
 
 def test_cerrar_la_capa_vacia_el_cubo(panel):
+    """Una sola invocacion del manejador, como pasa de verdad.
+
+    La version anterior de esta prueba llamaba a _capa_elegida dos veces -una
+    por la senal del combo y otra a mano- y la segunda encontraba todo ya
+    limpio. Asi dejo pasar un fallo que reventaba en QGIS:
+
+        close_cube cierra el cubo y emite composicionCambiada; el panel
+        responde llamando a refrescar_frontal, y la vista del cubo todavia
+        apunta al cubo recien cerrado:
+        AttributeError: 'NoneType' object has no attribute 'read_band'
+    """
+    assert panel.cubo.cube is not None
+    panel._bloqueado = True                  # que el combo no dispare la senal
     panel.combo_capa.setCurrentIndex(0)      # "(ninguna)"
-    panel._capa_elegida()
+    panel._bloqueado = False
+    panel._capa_elegida()                    # una sola vez
     assert panel.cubo.cube is None
+    assert panel.controller.cube is None
+
+
+def test_una_senal_tardia_no_revienta_sobre_un_cubo_cerrado(panel):
+    """El caso desnudo del fallo: la vista se entera tarde.
+
+    Coordinar el orden exacto de cinco senales es fragil; preguntar si el
+    cubo sigue abierto es barato."""
+    cubo = panel.controller.cube
+    cubo.close()
+    assert cubo.cerrado
+    panel._aplicar_composicion(panel.controller.composer)   # no debe reventar
+    assert panel.cubo._frontal is None
+
+
+def test_un_cubo_cerrado_dice_que_lo_esta(panel):
+    from hdfeos_extractor.core.cube import CubeError
+    cubo = panel.controller.cube
+    cubo.close()
+    for llamada in (lambda: cubo.get_spectrum(0, 0),
+                    lambda: cubo.get_band(index=0),
+                    lambda: cubo.get_transect("x", 0),
+                    lambda: cubo.get_roi(0, 0, 1, 1)):
+        with pytest.raises(CubeError, match="ya esta cerrado"):
+            llamada()
+
+
+def test_abrir_otra_escena_cierra_la_anterior(panel, tmp_path):
+    """Sin esto la memoria mapeada de la anterior queda viva, y en Windows su
+    archivo sigue bloqueado mientras QGIS este abierto."""
+    from qgis.core import QgsRasterLayer
+    primero = panel.controller.cube
+    otro = escribir_envi(tmp_path, cubo_patron(), "bil", longitudes_patron(),
+                         nombre="segunda")
+    panel._cargar_cubo(otro, QgsRasterLayer(otro, "segunda"))
+    assert primero.cerrado
+    assert not panel.controller.cube.cerrado
 
 
 def test_el_alto_se_reparte_siguiendo_al_tamano(app, panel):

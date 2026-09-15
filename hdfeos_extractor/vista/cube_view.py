@@ -170,9 +170,20 @@ class CubeView(QtWidgets.QWidget):
         self.banda_unica = indice
         self.refrescar_frontal()
 
+    def _utilizable(self):
+        """True si hay un cubo y todavia se puede leer.
+
+        El cubo lo cierra el controlador, y las senales que llegan despues
+        -por ejemplo la de composicion cambiada- encuentran a esta vista
+        apuntando todavia al cubo viejo. Preguntar es mas barato que
+        coordinar el orden exacto de cinco senales.
+        """
+        return self.cube is not None and not self.cube.cerrado
+
     def refrescar_frontal(self):
         """Recompone la cara frontal. Se llama al cambiar R, G o B."""
-        if self.cube is None:
+        if not self._utilizable():
+            self._frontal = None
             return
         if self.banda_unica is not None:
             banda, _ = self.cube.preview_band(index=self.banda_unica,
@@ -189,7 +200,7 @@ class CubeView(QtWidgets.QWidget):
 
     def set_posicion(self, x, y, recalcular=True):
         """Mueve la cruz. Es lo que hace que las caras recorran el cubo."""
-        if self.cube is None:
+        if not self._utilizable():
             return
         x = int(np.clip(x, 0, self.cube.samples - 1))
         y = int(np.clip(y, 0, self.cube.lines - 1))
@@ -217,7 +228,7 @@ class CubeView(QtWidgets.QWidget):
         cubo entero: alcanza para un realce estable y no obliga a leer
         cientos de megabytes al abrir.
         """
-        if self.cube is None:
+        if not self._utilizable():
             self._rango = None
             return
         modo = self.composer.modo if self.composer is not None else "percentil"
@@ -233,7 +244,8 @@ class CubeView(QtWidgets.QWidget):
 
     def _recalcular_caras(self):
         """Extrae los dos transectos que pasan por la cruz y los pinta."""
-        if self.cube is None:
+        if not self._utilizable():
+            self._superior = self._derecha = None
             return
         try:
             arriba = self.cube.get_transect("y", self.y)      # (x, banda)
@@ -260,7 +272,7 @@ class CubeView(QtWidgets.QWidget):
         profundidad, hacia arriba y a la derecha. Todo lo demas se deduce de
         estos cuatro valores, aca y en el pintado.
         """
-        if self.cube is None:
+        if not self._utilizable():
             return None
         margen = 10.0
         disponible_w = max(1.0, self.width() - 2 * margen)
