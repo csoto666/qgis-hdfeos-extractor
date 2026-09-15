@@ -58,6 +58,9 @@ modelador— pero deja de ser un peaje obligatorio para poder mirar la escena.
 | Arrastrar sobre el **cubo** | La cruz recorre la escena y las dos caras laterales cambian con ella |
 | Clic en un **costado del cubo** | Esa banda pasa a la cara frontal |
 | **Bandas malas** | Las descarta del análisis y las sombrea en el gráfico |
+| Botón derecho sobre el cubo | Acerca a ese rectángulo; sin arrastrar, o con la rueda, aleja |
+| **Ajustar a los datos** | Encuadra lo que tiene dato y deja fuera el relleno y los ceros |
+| Modo **Píxeles** | Cada clic suma un píxel; la firma sale del promedio, con su variabilidad |
 
 ### Extraer
 
@@ -150,6 +153,32 @@ Tres detalles que importan:
 Sin eje espectral en nanómetros los dos criterios por longitud de onda se
 apagan solos: sobre un eje que es el número de banda, «descartar por debajo de
 400» borraría el cubo entero.
+
+## Los cuatro modos de navegación
+
+Se ven en el cubo, y cada uno mueve algo distinto:
+
+| Modo | Qué mueve | Qué cambia |
+|---|---|---|
+| **Píxel** | La cruz entera | El espectro de ese píxel |
+| **Línea X** | Sólo la vertical | La **cara derecha** del cubo: el corte de esa columna |
+| **Línea Y** | Sólo la horizontal | La **cara superior**: el corte de esa fila |
+| **Área** | Un rectángulo | Firma media del área, con su desviación como envolvente |
+| **Píxeles** | Un punto por clic | Firma media del conjunto, para muestrear variabilidad |
+
+Funcionan tanto sobre el lienzo de QGIS como **dentro de la ventana del cubo**.
+Eso último importa: con un HDF-EOS5 abierto directamente no hay capa en el
+mapa, así que sobre el lienzo no habría dónde actuar.
+
+## El zoom recalcula el realce
+
+Acercarse no es sólo ver más grande. Una escena sin ortorectificar llega dentro
+de un rectángulo mucho más grande que la franja que el sensor recorrió, y el
+resto es relleno y ceros. Con el realce calculado sobre la escena entera esos
+ceros estiran el rango y el terreno queda aplastado en una banda de grises.
+
+Al acercarse se recalculan **el realce y la escala de color sobre lo visible**,
+y la barra de color a la derecha del cubo dice en qué valores está.
 
 ## La composición RGB se elige por longitud de onda
 
