@@ -324,3 +324,237 @@ def test_el_cubo_cerrado_no_inventa_coordenadas(tmp_path, datos, wl):
     cubo = HyperspectralCube.load(escribir_envi(tmp_path, datos, "bil", wl))
     cubo.close()
     assert not cubo.georreferencia.tiene_mapa
+
+
+# -- StructMetadata: la georreferencia del producto ortorectificado ---------
+def test_struct_metadata_utm():
+    """Un grid UTM da una afin exacta: es el caso del producto ortho."""
+    from conftest import estructura_grid
+    from hdfeos_extractor.core.georef import parsear_struct_metadata
+
+    ulx, uly, lrx, lry, nx, ny, epsg, _n = parsear_struct_metadata(
+        estructura_grid(nx=100, ny=80, ulx=400000.0, uly=4500000.0,
+                        pixel=30.0, zona=18))
+    assert (ulx, uly) == (400000.0, 4500000.0)
+    assert (lrx, lry) == (403000.0, 4497600.0)
+    assert (nx, ny) == (100, 80)
+    assert epsg == 32618
+
+
+def test_grid_utm_del_sur():
+    """El signo de la zona es el hemisferio, no un error de escritura."""
+    from conftest import estructura_grid
+    from hdfeos_extractor.core.georef import parsear_struct_metadata
+
+    _u, _v, _w, _z, _nx, _ny, epsg, _n = parsear_struct_metadata(
+        estructura_grid(nx=10, ny=10, zona=-19))
+    assert epsg == 32719
+
+
+def test_de_estructura_arma_la_geotransformacion():
+    from conftest import estructura_grid
+
+    g = Georreferencia.de_estructura(
+        estructura_grid(nx=100, ny=80, ulx=400000.0, uly=4500000.0,
+                        pixel=30.0), lineas=80, muestras=100)
+    assert g.es_afin and g.epsg == 32618
+    assert g.gt == pytest.approx((400000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0))
+    assert not g.necesita_remuestreo      # ya esta puesta: no se remuestrea
+
+
+def test_grid_geografico_en_microgrados():
+    """GCTP guarda las geograficas en grados por un millon.
+
+    Tomarlas como grados manda la escena a una longitud de setenta millones,
+    que no existe. Se detecta por magnitud: ningun grado pasa de 360.
+    """
+    texto = """GROUP=GridStructure
+\tGROUP=GRID_1
+\t\tXDim=100
+\t\tYDim=100
+\t\tUpperLeftPointMtrs=(-75000000.000000,5000000.000000)
+\t\tLowerRightMtrs=(-74000000.000000,4000000.000000)
+\t\tProjection=HE5_GCTP_GEO
+\tEND_GROUP=GRID_1
+END_GROUP=GridStructure
+"""
+    g = Georreferencia.de_estructura(texto, lineas=100, muestras=100)
+    assert g.epsg == EPSG_WGS84
+    assert g.gt[0] == pytest.approx(-75.0)
+    assert g.gt[3] == pytest.approx(5.0)
+    assert g.gt[1] == pytest.approx(0.01)
+
+
+def test_grid_geografico_ya_en_grados():
+    """Hay productores que escriben grados; no hay que dividirlos igual."""
+    texto = """GROUP=GridStructure
+\tGROUP=GRID_1
+\t\tXDim=10
+\t\tYDim=10
+\t\tUpperLeftPointMtrs=(-75.000000,5.000000)
+\t\tLowerRightMtrs=(-74.000000,4.000000)
+\t\tProjection=HE5_GCTP_GEO
+\tEND_GROUP=GRID_1
+END_GROUP=GridStructure
+"""
+    g = Georreferencia.de_estructura(texto, lineas=10, muestras=10)
+    assert g.gt[0] == pytest.approx(-75.0)
+    assert g.gt[1] == pytest.approx(0.1)
+
+
+def test_proyeccion_de_grid_desconocida_conserva_las_coordenadas():
+    """Sin EPSG la afin sigue valiendo: se entrega y se avisa."""
+    texto = """GROUP=GridStructure
+\tGROUP=GRID_1
+\t\tXDim=10
+\t\tYDim=10
+\t\tUpperLeftPointMtrs=(0.0,1000.0)
+\t\tLowerRightMtrs=(1000.0,0.0)
+\t\tProjection=HE5_GCTP_SNSOID
+\tEND_GROUP=GRID_1
+END_GROUP=GridStructure
+"""
+    g = Georreferencia.de_estructura(texto, lineas=10, muestras=10)
+    assert g.es_afin and g.epsg is None
+    assert "SNSOID" in g.nota
+
+
+def test_sin_grid_no_hay_nada_que_leer():
+    from hdfeos_extractor.core.georef import parsear_struct_metadata
+    assert parsear_struct_metadata(None) is None
+    assert parsear_struct_metadata("GROUP=SwathStructure\nEND") is None
+    assert not Georreferencia.de_estructura("").tiene_mapa
+
+
+def test_grid_degenerado_no_ubica_nada():
+    """Esquinas iguales no son una geotransformacion, son una cabecera rota."""
+    from hdfeos_extractor.core.georef import parsear_struct_metadata
+    texto = """GROUP=GridStructure
+\tGROUP=GRID_1
+\t\tXDim=10
+\t\tYDim=10
+\t\tUpperLeftPointMtrs=(0.0,0.0)
+\t\tLowerRightMtrs=(0.0,0.0)
+\t\tProjection=HE5_GCTP_UTM
+\t\tZoneCode=18
+\tEND_GROUP=GRID_1
+END_GROUP=GridStructure
+"""
+    assert parsear_struct_metadata(texto) is None
+
+
+# -- la geolocalizacion puede venir en otra resolucion ----------------------
+def test_rejilla_mas_gruesa_que_la_escena():
+    """Hay productos que guardan lat/lon cada n pixeles, no pixel a pixel.
+
+    El punto (f, c) de esa rejilla no es el pixel (f, c) del cubo. Tomarlo
+    como si lo fuera deja la escena del tamano de la rejilla: un error de
+    escala enorme que no dice de donde viene.
+    """
+    lon, lat = rejilla(alto=5, ancho=5)          # rejilla de 5x5...
+    g = Georreferencia.de_rejilla(lon, lat, por_lado=5,
+                                  lineas=40, muestras=40)   # ...cubo de 40x40
+    assert g.es_gcp
+    # El ultimo punto de la rejilla cae cerca del ultimo pixel del cubo.
+    ultimo = max(g.gcps, key=lambda p: p[0])
+    assert ultimo[0] == pytest.approx(36.0)      # (4 + 0.5) * 8
+
+
+# -- de punta a punta, sobre un HDF-EOS5 de grid ---------------------------
+def test_un_producto_ortho_se_ubica_sin_capas_de_latlon(tmp_path):
+    """El caso que estaba roto: ortho georreferenciado y sin lat/lon.
+
+    Un GRID de HDF-EOS no trae esas capas porque no las necesita, y el
+    explorador solo sabia buscarlas. Resultado: una escena perfectamente
+    ubicada en el archivo aterrizaba en coordenadas de pixel.
+    """
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    from conftest import (escribir_hdfeos, estructura_grid, longitudes_h5,
+                          reflectancia_patron)
+    from hdfeos_extractor.core.cube import HyperspectralCube
+
+    datos = reflectancia_patron()
+    alto, ancho = datos.shape[:2]
+    ruta = escribir_hdfeos(
+        tmp_path, datos, longitudes_h5(), geolocalizacion=False,
+        estructura=estructura_grid(nx=ancho, ny=alto, ulx=400000.0,
+                                   uly=4500000.0, pixel=30.0, zona=18))
+    cubo = HyperspectralCube.load(ruta)
+    try:
+        g = cubo.georreferencia
+        assert g.es_afin and g.epsg == 32618
+        assert not g.necesita_remuestreo
+        x, y = g.transformacion.to_map(0, 0)
+        assert (x, y) == pytest.approx((400015.0, 4499985.0))
+    finally:
+        cubo.close()
+
+
+def test_el_grid_manda_sobre_las_capas_de_latlon(tmp_path):
+    """Si estan las dos cosas, la afin exacta gana al ajuste por puntos."""
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    from conftest import (escribir_hdfeos, estructura_grid, longitudes_h5,
+                          reflectancia_patron)
+    from hdfeos_extractor.core.cube import HyperspectralCube
+
+    datos = reflectancia_patron()
+    alto, ancho = datos.shape[:2]
+    ruta = escribir_hdfeos(
+        tmp_path, datos, longitudes_h5(), geolocalizacion=True,
+        estructura=estructura_grid(nx=ancho, ny=alto))
+    cubo = HyperspectralCube.load(ruta)
+    try:
+        assert cubo.georreferencia.es_afin
+    finally:
+        cubo.close()
+
+
+def test_la_georreferencia_sobrevive_a_la_extraccion_a_envi(tmp_path):
+    """Extraer no puede perder la ubicacion.
+
+    El cubo ENVI salia sin ``map info`` aunque el HDF-EOS5 de origen fuera un
+    grid perfectamente ubicado, asi que el producto extraido aterrizaba en
+    coordenadas de pixel en cualquier programa que lo abriera despues.
+    """
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    from conftest import (escribir_hdfeos, estructura_grid, longitudes_h5,
+                          reflectancia_patron)
+    from hdfeos_extractor.core.cube import HyperspectralCube
+    from hdfeos_extractor.lector import Escena
+
+    datos = reflectancia_patron()
+    alto, ancho = datos.shape[:2]
+    ruta = escribir_hdfeos(
+        tmp_path, datos, longitudes_h5(), geolocalizacion=False,
+        estructura=estructura_grid(nx=ancho, ny=alto, ulx=400000.0,
+                                   uly=4500000.0, pixel=30.0, zona=18))
+    escena = Escena(ruta)
+    try:
+        escena.escribir_cubo(str(tmp_path / "salida"))
+    finally:
+        escena.backend.cerrar()
+
+    extraido = HyperspectralCube.load(str(tmp_path / "salida_cube.hdr"))
+    try:
+        g = extraido.georreferencia
+        assert g.es_afin and g.epsg == 32618
+        assert g.gt == pytest.approx(
+            (400000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0))
+    finally:
+        extraido.close()
+
+
+def test_una_escena_de_sensor_no_finge_map_info(tmp_path):
+    """Sin grid no hay afin que escribir: para eso esta el IGM."""
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    from conftest import (escribir_hdfeos, longitudes_h5, reflectancia_patron)
+    from hdfeos_extractor.core.envi import read_hdr
+    from hdfeos_extractor.lector import Escena
+
+    ruta = escribir_hdfeos(tmp_path, reflectancia_patron(), longitudes_h5())
+    escena = Escena(ruta)
+    try:
+        escena.escribir_cubo(str(tmp_path / "sensor"))
+    finally:
+        escena.backend.cerrar()
+    assert "map info" not in read_hdr(str(tmp_path / "sensor_cube.hdr"))

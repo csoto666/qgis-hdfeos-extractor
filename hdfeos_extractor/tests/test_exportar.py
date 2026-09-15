@@ -268,3 +268,53 @@ def test_un_pixel_marcado_cae_en_su_coordenada(tmp_path):
     # transparentes en vez de negras.
     alfa = ds.GetRasterBand(4).ReadAsArray()
     assert 0.2 < (alfa == 0).mean() < 0.6
+
+
+def test_un_ortho_se_envia_sin_remuestrear_y_con_zoom(tmp_path):
+    """El producto ortorectificado: ya esta puesto, solo hay que respetarlo.
+
+    Este es el caso que no se cubria. Un grid de HDF-EOS trae su afin en el
+    StructMetadata y NO trae capas de latitud y longitud, asi que buscandolas
+    no se encontraba nada y la escena -perfectamente ubicada en el archivo-
+    aterrizaba en coordenadas de pixel.
+
+    Se comprueba entera y con zoom, porque son dos errores distintos: uno
+    pone la capa en otro sitio y el otro la pone corrida.
+    """
+    gdal = pytest.importorskip("osgeo.gdal", reason="hace falta GDAL")
+    from hdfeos_extractor.core.georef import Georreferencia
+    from hdfeos_extractor.qgis_ui.exportar import enviar_vista
+    from conftest import estructura_grid
+
+    alto, ancho, bandas = 120, 160, 12
+    ulx, uly, pixel = 400000.0, 4500000.0, 30.0
+    datos = np.full((alto, ancho, bandas), 0.05, dtype=np.float32)
+    marca_f, marca_c = 40, 100
+    datos[marca_f:marca_f + 4, marca_c:marca_c + 4, :] = 0.9
+    cubo = HyperspectralCube.from_array(
+        datos, np.linspace(450.0, 1300.0, bandas), name="ortho.h5")
+    georref = Georreferencia.de_estructura(
+        estructura_grid(ancho, alto, ulx, uly, pixel, zona=18),
+        lineas=alto, muestras=ancho)
+    assert georref.es_afin and not georref.necesita_remuestreo
+
+    comp = RGBComposer(660.0, 550.0, 470.0, modo="minmax")
+    esperado_x = ulx + (marca_c + 2) * pixel
+    esperado_y = uly - (marca_f + 2) * pixel
+
+    for etiqueta, ventana in (("entera", (0, 0, ancho - 1, alto - 1)),
+                              ("zoom", (90, 30, 139, 79))):
+        ruta = str(tmp_path / ("%s.tif" % etiqueta))
+        enviar_vista(cubo, comp, ventana, georref, ruta=ruta)
+        ds = gdal.Open(ruta)
+        gt = ds.GetGeoTransform()
+        assert gt[0] == pytest.approx(ulx + ventana[0] * pixel)
+        assert gt[3] == pytest.approx(uly - ventana[1] * pixel)
+        assert gt[1] == pytest.approx(pixel)
+        rojo = ds.GetRasterBand(1).ReadAsArray()
+        fs, cs = np.where(rojo > 200)
+        assert fs.size, "el cuadrado no aparece en la vista %s" % etiqueta
+        x = gt[0] + (cs.mean() + 0.5) * gt[1]
+        y = gt[3] + (fs.mean() + 0.5) * gt[5]
+        assert x == pytest.approx(esperado_x, abs=pixel)
+        assert y == pytest.approx(esperado_y, abs=pixel)

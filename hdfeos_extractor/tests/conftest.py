@@ -139,8 +139,35 @@ RELLENO_H5 = -9999
 RUTA_CUBO_H5 = "HDFEOS/SWATHS/HYP/Data Fields/surface_reflectance"
 
 
+#: StructMetadata de un grid UTM, como el de un producto ortorectificado.
+#: Abreviado -el real trae ademas las dimensiones y los campos- pero con los
+#: mismos campos que se leen, y con las tabulaciones que usa HDF-EOS.
+ESTRUCTURA_GRID = """GROUP=GridStructure
+\tGROUP=GRID_1
+\t\tGridName="HYP"
+\t\tXDim=%(nx)d
+\t\tYDim=%(ny)d
+\t\tUpperLeftPointMtrs=(%(ulx).6f,%(uly).6f)
+\t\tLowerRightMtrs=(%(lrx).6f,%(lry).6f)
+\t\tProjection=HE5_GCTP_UTM
+\t\tZoneCode=%(zona)d
+\t\tSphereCode=12
+\t\tGridOrigin=HE5_HDFE_GD_UL
+\tEND_GROUP=GRID_1
+END_GROUP=GridStructure
+END
+"""
+
+
+def estructura_grid(nx, ny, ulx=400000.0, uly=4500000.0, pixel=30.0, zona=18):
+    return ESTRUCTURA_GRID % {
+        "nx": nx, "ny": ny, "ulx": ulx, "uly": uly,
+        "lrx": ulx + nx * pixel, "lry": uly - ny * pixel, "zona": zona}
+
+
 def escribir_hdfeos(carpeta, reflectancia, wavelengths, fwhm=None,
-                    buenas=None, relleno_en=(), nombre="escena"):
+                    buenas=None, relleno_en=(), nombre="escena",
+                    geolocalizacion=True, estructura=None):
     """Escribe un HDF-EOS5 con la estructura de los productos reales.
 
     ``reflectancia`` llega en ejes (y, x, banda) y en reflectancia; se guarda
@@ -174,13 +201,20 @@ def escribir_hdfeos(carpeta, reflectancia, wavelengths, fwhm=None,
             # que no debe robarse la busqueda de longitudes de onda.
             f.create_dataset(base + "good_wavelengths",
                              data=np.asarray(buenas, dtype=np.uint8))
-        geo = "HDFEOS/SWATHS/HYP/Geolocation Fields/"
-        alto, ancho = datos.shape[:2]
-        yy, xx = np.mgrid[0:alto, 0:ancho]
-        f.create_dataset(geo + "Longitude",
-                         data=(-70.0 + xx * 0.001).astype(np.float32))
-        f.create_dataset(geo + "Latitude",
-                         data=(-33.0 - yy * 0.001).astype(np.float32))
+        # Un producto ortorectificado se guarda como GRID y NO trae estas dos
+        # capas: su georreferencia es la afin del StructMetadata. Por eso se
+        # pueden apagar, que es el caso que hay que poder probar.
+        if geolocalizacion:
+            geo = "HDFEOS/SWATHS/HYP/Geolocation Fields/"
+            alto, ancho = datos.shape[:2]
+            yy, xx = np.mgrid[0:alto, 0:ancho]
+            f.create_dataset(geo + "Longitude",
+                             data=(-70.0 + xx * 0.001).astype(np.float32))
+            f.create_dataset(geo + "Latitude",
+                             data=(-33.0 - yy * 0.001).astype(np.float32))
+        if estructura:
+            f.create_dataset("HDFEOS INFORMATION/StructMetadata.0",
+                             data=np.bytes_(estructura.encode("utf-8")))
     return ruta
 
 

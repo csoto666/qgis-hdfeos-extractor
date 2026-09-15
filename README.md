@@ -198,9 +198,17 @@ tratarlos igual es justamente el error:
 
 | Caso | De dónde sale | Qué se hace |
 |---|---|---|
-| **Afín** | `map info` de ENVI, o la geotransformación que traiga GDAL | Se escribe tal cual, con sus términos de rotación. No se toca ningún píxel |
+| **Grid (ortho)** | `StructMetadata` del HDF-EOS5 | Se usa su afín exacta. No se toca ningún píxel |
+| **Afín** | `map info` de ENVI, o la geotransformación que traiga GDAL | Se escribe tal cual, con sus términos de rotación |
 | **Geometría de sensor** | Las capas de latitud y longitud del HDF-EOS5 | Se reproyecta de verdad, por placa delgada, hacia una rejilla al norte |
 | **Sin georreferencia** | — | Se dice. No se inventa un SRC |
+
+El primero es el producto **ortorectificado**, y es el que más despista: un
+grid de HDF-EOS no trae capas de latitud y longitud —no las necesita, le basta
+una afín— así que buscárselas no encuentra nada aunque el producto venga
+perfectamente ubicado. Su georreferencia está en `StructMetadata` y en ningún
+otro sitio del archivo. Extraer a ENVI la conserva: el cubo extraído sale con
+su `map info`.
 
 El segundo caso es el de los productos sin ortorectificar, y no es un detalle:
 ahí la relación entre píxel y terreno cambia a lo ancho de la franja, y

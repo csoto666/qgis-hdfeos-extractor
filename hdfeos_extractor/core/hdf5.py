@@ -105,20 +105,81 @@ class Hdf5Source(object):
         return self._georref
 
     def _leer_georreferencia(self):
+        """El grid primero, las capas de lat/lon despues.
+
+        Ese orden es el importante. Un producto ortorectificado se guarda
+        como GRID de HDF-EOS: ya esta puesto sobre una proyeccion, trae una
+        geotransformacion exacta en el StructMetadata y NO trae capas de
+        latitud y longitud, porque no le hacen falta. Buscandole lat/lon no
+        se encuentra nada y la escena quedaba sin georreferencia aunque el
+        producto viniera perfectamente ubicado.
+
+        Un producto en geometria de sensor es al reves: no hay afin que lo
+        describa y lo que trae son las dos capas. Por eso se prueban los dos
+        caminos, y no uno.
+        """
         from .georef import Georreferencia
         if self.escena is None:
             return Georreferencia.ninguna(nota="el cubo ya esta cerrado")
+        lineas, muestras = self.escena.lineas, self.escena.muestras
+
+        del_grid = self._georreferencia_del_grid(lineas, muestras)
+        if del_grid is not None and del_grid.tiene_mapa:
+            return del_grid
+
         try:
             ruta_lon, ruta_lat = self.escena.hallar_geolocalizacion()
             if not (ruta_lon and ruta_lat):
-                return Georreferencia.ninguna(
-                    nota="el producto no trae capas de latitud y longitud")
+                return Georreferencia.ninguna(nota=self._por_que_no_hay())
             lon = self.backend.leer_todo(ruta_lon)
             lat = self.backend.leer_todo(ruta_lat)
         except (ErrorLectura, OSError, KeyError, ValueError) as exc:
             return Georreferencia.ninguna(
                 nota="no se pudieron leer las capas de lat/lon: %s" % exc)
-        return Georreferencia.de_rejilla(lon, lat)
+        return Georreferencia.de_rejilla(lon, lat, lineas=lineas,
+                                         muestras=muestras)
+
+    def _por_que_no_hay(self):
+        """Que se busco y que habia, para poder diagnosticar sin el archivo.
+
+        "No hay georreferencia" no se puede depurar: no dice si falta el
+        grid, si las capas se llaman de otro modo o si estan en otra
+        resolucion. Esto enumera lo que el contenedor si trae, que es lo que
+        de verdad distingue esos tres casos.
+        """
+        partes = ["el producto no trae ni un grid georreferenciado ni capas "
+                  "de latitud y longitud"]
+        leer = getattr(self.backend, "texto_estructura", None)
+        try:
+            hay_estructura = bool(leer and leer())
+        except Exception:                  # pragma: no cover - backend raro
+            hay_estructura = False
+        partes.append("StructMetadata: %s"
+                      % ("si, pero sin grid" if hay_estructura else "no"))
+        try:
+            candidatas = sorted(
+                {r.rsplit("/", 1)[-1]
+                 for r, (forma, _t) in self.escena.inventario.items()
+                 if len(forma) == 2})[:12]
+        except (AttributeError, TypeError):    # pragma: no cover
+            candidatas = []
+        if candidatas:
+            partes.append("capas 2D en el archivo: " + ", ".join(candidatas))
+        return ". ".join(partes)
+
+    def _georreferencia_del_grid(self, lineas, muestras):
+        """La afin del StructMetadata, o None si el backend no lo sirve."""
+        from .georef import Georreferencia
+        leer = getattr(self.backend, "texto_estructura", None)
+        if leer is None:
+            return None
+        try:
+            texto = leer()
+        except (ErrorLectura, OSError, KeyError, ValueError):
+            return None
+        if not texto:
+            return None
+        return Georreferencia.de_estructura(texto, lineas, muestras)
 
     # -- lecturas -----------------------------------------------------------
     def _convertir(self, crudo):

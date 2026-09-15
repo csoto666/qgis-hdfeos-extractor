@@ -45,6 +45,14 @@ RAICES = [
     "HDFEOS/SWATHS/HYP",
     "HDFEOS/GRIDS/HYP",
 ]
+# Donde HDF-EOS guarda la descripcion de sus swaths y grids, incluida la
+# proyeccion y las esquinas de un GRID. Es la georreferencia de un producto
+# ortorectificado: un grid no trae capas de latitud y longitud porque no las
+# necesita, le basta con una afin, y esa afin esta aca y en ningun otro lado.
+RUTA_ESTRUCTURA = "HDFEOS INFORMATION/StructMetadata.0"
+#: GDAL aplana esa ruta en los metadatos de la raiz con este nombre.
+CLAVE_ESTRUCTURA_GDAL = "StructMetadata_0"
+
 # Subgrupos: HDF-EOS los nombra con espacio, GDAL los expone con guion bajo
 SUBGRUPOS_DATOS = ["Data Fields", "Data_Fields"]
 SUBGRUPOS_GEO = ["Geolocation Fields", "Geolocation_Fields"]
@@ -166,6 +174,23 @@ class BackendH5(object):
     def leer_todo(self, ruta):
         return np.asarray(self._ds[ruta][:])
 
+    def texto_estructura(self):
+        """El StructMetadata del contenedor, o None si no lo trae.
+
+        Se lee con ``[()]`` y no con ``[:]``: es un dataset escalar -una sola
+        cadena larga- y rebanarlo falla.
+        """
+        d = self._ds.get(RUTA_ESTRUCTURA)
+        if d is None:
+            return None
+        try:
+            crudo = d[()]
+        except (TypeError, ValueError, OSError):
+            return None
+        if isinstance(crudo, bytes):
+            return crudo.decode("utf-8", "replace")
+        return str(crudo)
+
     def leer_bloque(self, ruta, y0, y1):
         d = self._ds[ruta]
         return np.asarray(d[:, y0:y1, :] if d.ndim == 3 else d[y0:y1, :])
@@ -255,6 +280,24 @@ class BackendGdal(object):
                 continue
             salida[k[len(prefijo):]] = v
         return salida
+
+    def texto_estructura(self):
+        """El StructMetadata, si GDAL lo expone entre los metadatos.
+
+        Se busca por nombre exacto y, si no aparece, por coincidencia: cada
+        version del driver lo bautiza de una forma -con punto, con guion
+        bajo, con o sin el grupo delante- y quedarse en un solo nombre deja
+        sin georreferencia a un producto que si la trae. Con el respaldo de
+        GDAL puede no estar en absoluto; entonces manda h5py, que lo lee
+        siempre porque ahi es un dataset normal.
+        """
+        for clave in (CLAVE_ESTRUCTURA_GDAL, "StructMetadata.0"):
+            if clave in self._raiz:
+                return self._raiz[clave]
+        for clave, valor in self._raiz.items():
+            if "structmetadata" in clave.lower():
+                return valor
+        return None
 
     def _leer_crudo(self, ruta, y0, ny, x0=0, nx=None):
         """Lee bloques con ReadRaster + frombuffer, nunca con ReadAsArray.
@@ -657,6 +700,8 @@ class Escena(object):
             # en que el cubo viene en enteros.
             campos["data ignore value"] = self.relleno_escalado()
 
+        campos.update(self.campos_map_info())
+
         wl = (self.wavelengths if self.wavelengths is not None
               else np.arange(1, self.bandas + 1, dtype=float))
         listas = {"wavelength": formatear(wl, 4)}
@@ -665,6 +710,51 @@ class Escena(object):
         if self.unidades == "Nanometers":
             listas["bbl"] = formatear(self.lista_bandas_malas(), 0, 20)
         escribir_hdr(prefijo + SUF_CUBO + ".hdr", campos, listas)
+
+    def campos_map_info(self):
+        """``map info`` para la cabecera ENVI, si el producto es un grid.
+
+        Un producto ortorectificado trae su afin en el StructMetadata, y sin
+        esto se perdia al extraer: el cubo ENVI salia sin georreferencia
+        aunque el HDF-EOS5 de origen estuviera perfectamente ubicado, y
+        cualquier programa que lo abriera despues lo ponia en coordenadas de
+        pixel. Un producto en geometria de sensor no tiene afin que escribir
+        -para eso esta el IGM- y aqui devuelve un diccionario vacio.
+        """
+        from .core.georef import EPSG_WGS84, parsear_struct_metadata
+
+        leer = getattr(self.backend, "texto_estructura", None)
+        if leer is None:
+            return {}
+        try:
+            rejilla = parsear_struct_metadata(leer())
+        except (ErrorLectura, OSError, ValueError):
+            return {}
+        if rejilla is None:
+            return {}
+        ulx, uly, lrx, lry, _nx, _ny, epsg, _nota = rejilla
+        px = (lrx - ulx) / float(self.muestras)
+        py = (uly - lry) / float(self.lineas)
+        if not px or not py:
+            return {}
+
+        # ENVI numera el pixel de referencia desde 1 y da la coordenada de su
+        # esquina superior izquierda, que es justo lo que trae el grid.
+        if epsg == EPSG_WGS84:
+            cabeza, cola = "Geographic Lat/Lon", "WGS-84, units=Degrees"
+        elif epsg and 32600 < epsg < 32661:
+            cabeza = "UTM"
+            cola = "%d, North, WGS-84, units=Meters" % (epsg - 32600)
+        elif epsg and 32700 < epsg < 32761:
+            cabeza = "UTM"
+            cola = "%d, South, WGS-84, units=Meters" % (epsg - 32700)
+        else:
+            # Sin proyeccion reconocida no se escribe nada: un map info con
+            # un nombre inventado es peor que ninguno, porque quien lo lea le
+            # va a creer.
+            return {}
+        return {"map info": "{%s, 1.0000, 1.0000, %.6f, %.6f, %.10g, %.10g, "
+                            "%s}" % (cabeza, ulx, uly, px, py, cola)}
 
     def escribir_igm(self, prefijo):
         """Escribe la geometria de entrada. Devuelve la ruta o None."""

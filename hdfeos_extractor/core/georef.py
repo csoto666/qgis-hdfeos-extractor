@@ -70,6 +70,16 @@ EPSG_UTM_SUR = 32700        # + zona
 #: nota mirando la pantalla.
 DATUMS_WGS84 = ("wgs-84", "wgs84", "wgs 84", "world geodetic system 1984")
 
+#: Codigos de proyeccion de HDF-EOS (GCTP) que se saben traducir. Los demas
+#: se leen igual -la afin es valida- pero se quedan sin SRC y se dice.
+GCTP_GEO = "GEO"
+GCTP_UTM = "UTM"
+
+#: Codigos de esferoide de GCTP que son WGS84. El 12 es el habitual; -1
+#: significa "usa los parametros de proyeccion", y en un producto moderno eso
+#: es WGS84 en la practica.
+ESFERAS_WGS84 = (12, -1)
+
 #: Cuantos puntos de control por lado se toman de la rejilla de lat/lon.
 #: 21x21 = 441 puntos: suficiente para que una transformacion de placa
 #: delgada siga el balanceo del sensor, y poco para que el remuestreo no se
@@ -283,7 +293,33 @@ class Georreferencia(object):
                    origen="archivo", nota=nota)
 
     @classmethod
-    def de_rejilla(cls, lon, lat, por_lado=GCP_POR_LADO, epsg=EPSG_WGS84):
+    def de_estructura(cls, texto, lineas=None, muestras=None):
+        """Georreferencia desde el ``StructMetadata`` de un HDF-EOS.
+
+        Es el caso del producto ortorectificado. Un GRID de HDF-EOS no trae
+        capas de latitud y longitud -no las necesita, le basta una afin- y
+        esa afin esta aqui y en ningun otro sitio del archivo. Buscarle
+        lat/lon a un grid no encuentra nada, y el resultado era una escena
+        sin georreferencia aunque el producto viniera perfectamente ubicado.
+        """
+        rejilla = parsear_struct_metadata(texto)
+        if rejilla is None:
+            return cls.ninguna(
+                nota="el contenedor no describe ningun grid georreferenciado")
+        ulx, uly, lrx, lry, nx, ny, epsg, nota = rejilla
+        # Se prefiere el tamano que declara el cubo: el grid y el cubo tienen
+        # que coincidir, y si no coinciden manda el dato.
+        nx = int(muestras or nx)
+        ny = int(lineas or ny)
+        if not nx or not ny:
+            return cls.ninguna(nota="el grid no declara su tamano")
+        gt = (ulx, (lrx - ulx) / float(nx), 0.0,
+              uly, 0.0, (lry - uly) / float(ny))
+        return cls(gt=gt, epsg=epsg, origen="grid del producto", nota=nota)
+
+    @classmethod
+    def de_rejilla(cls, lon, lat, por_lado=GCP_POR_LADO, epsg=EPSG_WGS84,
+                   lineas=None, muestras=None):
         """Puntos de control desde las capas de longitud y latitud.
 
         Es la georreferencia verdadera de un producto en geometria de sensor.
@@ -297,6 +333,13 @@ class Georreferencia(object):
             return cls.ninguna(nota="las capas de lat/lon no tienen la forma "
                                     "de la escena")
         alto, ancho = lon.shape
+        # La geolocalizacion no siempre viene pixel a pixel: hay productos que
+        # la guardan en una rejilla mas gruesa. El punto (f, c) de esa rejilla
+        # no es entonces el pixel (f, c) del cubo, y tomarlo como si lo fuera
+        # deja la escena del tamano de la rejilla -un error de escala que se
+        # ve enorme y no dice por que-.
+        escala_f = (float(lineas) / alto) if lineas else 1.0
+        escala_c = (float(muestras) / ancho) if muestras else 1.0
         filas = np.unique(np.linspace(0, alto - 1, min(por_lado, alto))
                           .astype(int))
         cols = np.unique(np.linspace(0, ancho - 1, min(por_lado, ancho))
@@ -311,7 +354,8 @@ class Georreferencia(object):
                 # que suele ser -9999: fuera del planeta y facil de descartar.
                 if abs(x) > 180.0 or abs(y) > 90.0:
                     continue
-                gcps.append((float(c) + 0.5, float(f) + 0.5,
+                gcps.append(((float(c) + 0.5) * escala_c,
+                             (float(f) + 0.5) * escala_f,
                              float(x), float(y)))
         if len(gcps) < 3:
             return cls.ninguna(nota="las capas de lat/lon no traen valores "
@@ -454,3 +498,112 @@ def afin_por_minimos_cuadrados(gcps):
     (gt1, gt4), (gt2, gt5), (gt0, gt3) = coef
     return (float(gt0), float(gt1), float(gt2),
             float(gt3), float(gt4), float(gt5))
+
+
+def parsear_struct_metadata(texto):
+    """``StructMetadata`` -> (ulx, uly, lrx, lry, nx, ny, epsg, nota), o None.
+
+    HDF-EOS describe sus grids en un bloque de texto con forma de arbol. Lo
+    que hace falta son seis numeros y la proyeccion:
+
+        GROUP=GridStructure
+            GROUP=GRID_1
+                XDim=1200
+                YDim=1200
+                UpperLeftPointMtrs=(499980.000000,4600020.000000)
+                LowerRightMtrs=(609780.000000,4490220.000000)
+                Projection=HE5_GCTP_UTM
+                ZoneCode=18
+                SphereCode=12
+
+    Se lee el primer grid que este completo. Un producto hiperespectral trae
+    uno solo; cuando trae varios son el cubo y sus mascaras, con la misma
+    rejilla, asi que el primero sirve igual.
+    """
+    if not texto:
+        return None
+    if isinstance(texto, bytes):
+        texto = texto.decode("utf-8", "replace")
+    if "GridStructure" not in texto:
+        return None
+
+    for bloque in re.split(r"\bGROUP\s*=\s*GRID_\d+", texto)[1:]:
+        campos = _campos_de_bloque(bloque)
+        ul = _par(campos.get("upperleftpointmtrs"))
+        lr = _par(campos.get("lowerrightmtrs"))
+        if ul is None or lr is None:
+            continue
+        nx = _entero(campos.get("xdim"))
+        ny = _entero(campos.get("ydim"))
+        epsg, nota, escala = _epsg_de_estructura(campos)
+        ulx, uly = ul[0] * escala, ul[1] * escala
+        lrx, lry = lr[0] * escala, lr[1] * escala
+        if ulx == lrx or uly == lry:
+            continue                       # un grid degenerado no ubica nada
+        return (ulx, uly, lrx, lry, nx, ny, epsg, nota)
+    return None
+
+
+def _campos_de_bloque(bloque):
+    """``clave=valor`` de un bloque, hasta donde empiece el siguiente grid."""
+    campos = {}
+    for linea in bloque.splitlines():
+        if "=" not in linea:
+            continue
+        clave, _, valor = linea.partition("=")
+        clave = clave.strip().lower()
+        if clave in ("group", "end_group", "object", "end_object"):
+            continue
+        campos.setdefault(clave, valor.strip().strip('"'))
+    return campos
+
+
+def _par(valor):
+    """``(x,y)`` -> tupla de dos floats, o None."""
+    if not valor:
+        return None
+    numeros = re.findall(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", valor)
+    if len(numeros) < 2:
+        return None
+    try:
+        return (float(numeros[0]), float(numeros[1]))
+    except ValueError:
+        return None
+
+
+def _entero(valor):
+    try:
+        return int(float(valor))
+    except (TypeError, ValueError):
+        return None
+
+
+def _epsg_de_estructura(campos):
+    """(epsg, nota, escala) para las coordenadas de un grid de HDF-EOS.
+
+    La escala existe por las proyecciones geograficas: GCTP las guarda en
+    microgrados -grados por un millon- y tomarlas como grados manda la escena
+    a una longitud imposible. Se detecta por magnitud y no por el codigo de
+    proyeccion, porque hay productores que ya escriben grados.
+    """
+    proyeccion = (campos.get("projection") or "").upper()
+    esfera = _entero(campos.get("spherecode"))
+    if esfera is None:
+        esfera = _entero(campos.get("datum"))
+    es_wgs84 = esfera is None or esfera in ESFERAS_WGS84
+
+    if GCTP_GEO in proyeccion:
+        ul = _par(campos.get("upperleftpointmtrs")) or (0.0, 0.0)
+        escala = 1e-6 if max(abs(ul[0]), abs(ul[1])) > 360.0 else 1.0
+        return EPSG_WGS84, "", escala
+    if GCTP_UTM in proyeccion:
+        zona = _entero(campos.get("zonecode"))
+        if zona and 1 <= abs(zona) <= 60 and es_wgs84:
+            # El signo de la zona es el hemisferio: negativa es sur.
+            base = EPSG_UTM_NORTE if zona > 0 else EPSG_UTM_SUR
+            return base + abs(zona), "", 1.0
+        return None, ("el grid declara UTM pero no se pudo deducir el codigo "
+                      "EPSG (zona %s, esferoide %s)" % (zona, esfera)), 1.0
+    return None, ("la proyeccion '%s' del grid no se traduce a un codigo "
+                  "EPSG: la capa sale con coordenadas pero sin SRC, y hay "
+                  "que asignarselo a mano" % (proyeccion or "sin nombre")), 1.0
