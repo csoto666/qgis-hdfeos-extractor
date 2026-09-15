@@ -27,9 +27,35 @@ pixel, cuando, y que creia el usuario que estaba muestreando. Por eso
 y al grafico.
 """
 
+import contextlib
 import datetime
+import warnings
 
 import numpy as np
+
+
+@contextlib.contextmanager
+def sin_avisos_de_rebanada_vacia():
+    """Calla los avisos de numpy al promediar una banda entera de NaN.
+
+    Con la mascara de bandas malas puesta, una banda descartada es NaN en
+    todos los pixeles, y nanmean y nanstd avisan "Mean of empty slice" y
+    "Degrees of freedom <= 0". Ahora eso es lo normal y no una anomalia: sin
+    esto, cada firma de area llena el registro de QGIS de avisos que no
+    significan nada y que tapan los que si.
+
+    errstate no alcanza: estos son avisos de Python, no estados de punto
+    flotante.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", r"Mean of empty slice",
+                                RuntimeWarning)
+        warnings.filterwarnings("ignore", r"Degrees of freedom <= 0",
+                                RuntimeWarning)
+        warnings.filterwarnings("ignore", r"All-NaN slice encountered",
+                                RuntimeWarning)
+        with np.errstate(invalid="ignore"):
+            yield
 
 
 def _ahora():
@@ -159,7 +185,7 @@ def _promediar(cube, espectros, coords, name, notes):
     un solo pixel del area bastaria para anular esa banda en la media de todo
     el poligono.
     """
-    with np.errstate(invalid="ignore"):
+    with sin_avisos_de_rebanada_vacia():
         media = np.nanmean(espectros, axis=0)
         desv = np.nanstd(espectros, axis=0)
     return Signature(name=name, wavelengths=cube.wavelengths, values=media,
@@ -177,7 +203,7 @@ def statistics(espectros):
     no tiene que recordar el orden.
     """
     datos = np.atleast_2d(np.asarray(espectros, dtype=np.float32))
-    with np.errstate(invalid="ignore"):
+    with sin_avisos_de_rebanada_vacia():
         return {
             "n": int(datos.shape[0]),
             "mean": np.nanmean(datos, axis=0),

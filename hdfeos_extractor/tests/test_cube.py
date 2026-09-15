@@ -238,3 +238,94 @@ def test_to_xarray_avisa_cuando_falta_xarray(memoria):
 def test_repr_dice_dimensiones_y_rango(cubo):
     texto = repr(cubo)
     assert "7 x 5 x 9" in texto and "nm" in texto
+
+
+# -- bandas malas -------------------------------------------------------------
+def cubo_ancho():
+    """Un cubo cuyo eje cruza las ventanas de absorcion y los extremos."""
+    from conftest import longitudes_con_absorcion
+    wl = longitudes_con_absorcion()
+    datos = np.ones((5, 6, wl.size), dtype=np.float32)
+    return HyperspectralCube.from_array(datos, wl), wl
+
+
+def test_al_abrir_se_descartan_las_ventanas_de_absorcion():
+    """Automatico, que es lo que hace falta: nadie deberia tener que
+    acordarse de sacar el vapor de agua antes de mirar una firma."""
+    c, wl = cubo_ancho()
+    assert c.mask.activa
+    espectro = c.get_spectrum(1, 1)
+    from hdfeos_extractor.lector import VENTANAS_ABSORCION
+    for lo, hi in VENTANAS_ABSORCION:
+        dentro = (wl >= lo) & (wl <= hi)
+        assert np.all(np.isnan(espectro[dentro]))
+    assert np.isfinite(espectro[c.mask.buenas]).all()
+
+
+def test_la_bbl_del_archivo_llega_a_la_mascara(tmp_path, datos, wl):
+    bbl = np.ones(BANDAS, dtype=int)
+    bbl[2] = bbl[6] = 0
+    hdr = escribir_envi(tmp_path, datos, "bil", wl, extras={
+        "bbl": "{" + ", ".join(str(v) for v in bbl) + "}"})
+    with HyperspectralCube.load(hdr) as c:
+        assert c.mask.hay_bbl
+        espectro = c.get_spectrum(1, 1)
+        assert np.isnan(espectro[2]) and np.isnan(espectro[6])
+        assert np.isfinite(espectro[0])
+
+
+def test_los_transectos_y_las_areas_tambien_se_enmascaran():
+    c, _ = cubo_ancho()
+    malas = c.mask.malas
+    for corte in (c.get_transect("x", 2), c.get_transect("y", 2),
+                  c.get_roi(0, 0, 2, 2).reshape(-1, c.bands)):
+        assert np.all(np.isnan(corte[..., malas]))
+        assert np.isfinite(corte[..., c.mask.buenas]).all()
+
+
+def test_la_banda_completa_NO_se_enmascara():
+    """La mascara limpia el analisis espectral, no impide mirar una banda.
+    Quien quiere ver como se ve la de 1400 nm tiene derecho a verla."""
+    c, _ = cubo_ancho()
+    mala = int(np.flatnonzero(c.mask.malas)[0])
+    banda = c.get_band(index=mala)
+    assert np.isfinite(banda).all()
+
+
+def test_el_compositor_no_cae_en_una_banda_mala():
+    from hdfeos_extractor.core.rgb import RGBComposer
+    from hdfeos_extractor.lector import VENTANAS_ABSORCION
+    c, _ = cubo_ancho()
+    centro = sum(VENTANAS_ABSORCION[0]) / 2.0
+    indices = RGBComposer(centro, centro, centro).bands_of(c)
+    assert all(c.mask.buenas[i] for i in indices)
+
+
+def test_sin_eje_espectral_no_se_aplican_las_ventanas():
+    """Las ventanas estan en nanometros. Sobre un eje que es el indice de
+    banda, "descartar por debajo de 400" borraria el cubo entero."""
+    c = HyperspectralCube.from_array(np.ones((3, 3, 12), dtype=np.float32))
+    assert not c.has_wavelengths
+    assert c.mask.n_malas == 0
+    assert np.isfinite(c.get_spectrum(1, 1)).all()
+
+
+def test_se_puede_cambiar_la_mascara_en_caliente():
+    c, wl = cubo_ancho()
+    antes = c.mask.n_malas
+    c.set_mask(c.mask.copia(usar_absorcion=False, usar_extremos=False))
+    assert c.mask.n_malas == 0 and c.mask.n_malas < antes
+    assert np.isfinite(c.get_spectrum(1, 1)).all()
+    c.set_mask(c.mask.copia(rangos=[(900.0, 1100.0)]))
+    espectro = c.get_spectrum(1, 1)
+    assert np.all(np.isnan(espectro[(wl >= 900.0) & (wl <= 1100.0)]))
+
+
+def test_las_estadisticas_ignoran_las_bandas_descartadas():
+    """Es la mitad cara del problema: la banda mala no solo ensucia el
+    grafico, entra en la media como si fuera una medicion."""
+    from hdfeos_extractor.core.spectral import signature_from_roi
+    c, _ = cubo_ancho()
+    firma = signature_from_roi(c, 0, 0, 2, 2)
+    assert np.all(np.isnan(firma.values[c.mask.malas]))
+    assert np.allclose(firma.values[c.mask.buenas], 1.0)

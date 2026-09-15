@@ -37,6 +37,7 @@ from ..core.cube import CubeError, HyperspectralCube
 from ..core.geo import GeoError, GeoTransform
 from ..core.hdf5 import Hdf5Source
 from ..core.library import LibraryError, SpectralLibrary
+from ..core.bandas import formatear_rangos, parsear_rangos
 from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
 from ..vista.cube_view import CubeView
@@ -242,10 +243,70 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         caja.setContentsMargins(3, 3, 3, 3)
         self.grafico = SpectralPlot()
         caja.addWidget(self.grafico, 1)
+        # Fila siempre visible: la lectura del cursor, la cuenta de bandas
+        # descartadas -que hay que ver aunque no se este configurando nada- y
+        # el boton que despliega los controles.
+        fila = QtWidgets.QHBoxLayout()
+        self.boton_bandas = QtWidgets.QToolButton()
+        self.boton_bandas.setText("Bandas malas")
+        self.boton_bandas.setCheckable(True)
+        self.boton_bandas.setToolTip(
+            "Elegir que bandas quedan fuera del analisis")
+        fila.addWidget(self.boton_bandas)
+        self.cuenta_bandas = QtWidgets.QLabel("-")
+        fila.addWidget(self.cuenta_bandas)
+        fila.addStretch(1)
         self.lectura = QtWidgets.QLabel(" ")
         self.lectura.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        caja.addWidget(self.lectura)
+        fila.addWidget(self.lectura)
+        caja.addLayout(fila)
+
+        # Los controles van escondidos por defecto. Son un ajuste por escena,
+        # no algo que se toque todo el rato, y el panel acoplado al costado no
+        # tiene alto de sobra: dejarlos siempre visibles se lo quitaba justo a
+        # las dos vistas, que es lo que hay que mirar.
+        self.panel_bandas = QtWidgets.QWidget()
+        self.panel_bandas.setLayout(self._filas_bandas_malas())
+        self.panel_bandas.setVisible(False)
+        caja.addWidget(self.panel_bandas)
         return grupo
+
+    def _filas_bandas_malas(self):
+        columna = QtWidgets.QVBoxLayout()
+        columna.setContentsMargins(0, 0, 0, 0)
+        columna.setSpacing(2)
+
+        fila = QtWidgets.QHBoxLayout()
+        fila.addWidget(QtWidgets.QLabel("Descartar:"))
+        self.casillas_bandas = {}
+        for clave, texto, ayuda in (
+                ("usar_bbl", "del archivo",
+                 "La lista de bandas malas (bbl) que trae el propio\n"
+                 "producto. Se desactiva si el archivo no la incluye."),
+                ("usar_absorcion", "vapor de agua",
+                 "1340-1460 y 1790-1960 nm. Ahi el vapor atmosferico\n"
+                 "absorbe casi todo: lo que vuelve es ruido, no terreno."),
+                ("usar_extremos", "extremos",
+                 "Por debajo de 400 y por encima de 2450 nm el sensor\n"
+                 "ya no responde bien y la relacion senal-ruido cae.")):
+            casilla = QtWidgets.QCheckBox(texto)
+            casilla.setToolTip(ayuda)
+            casilla.setChecked(True)
+            fila.addWidget(casilla)
+            self.casillas_bandas[clave] = casilla
+        fila.addStretch(1)
+        columna.addLayout(fila)
+
+        fila2 = QtWidgets.QHBoxLayout()
+        fila2.addWidget(QtWidgets.QLabel("Rangos propios:"))
+        self.campo_rangos = QtWidgets.QLineEdit()
+        self.campo_rangos.setPlaceholderText("1340-1460, 1790-1960")
+        self.campo_rangos.setToolTip(
+            "Rangos en nanometros, separados por comas. Un valor suelto\n"
+            "descarta esa sola banda. Se aplica al terminar de escribir.")
+        fila2.addWidget(self.campo_rangos, 1)
+        columna.addLayout(fila2)
+        return columna
 
     def _bloque_firmas(self):
         grupo = QtWidgets.QGroupBox("Firmas guardadas")
@@ -328,6 +389,16 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.controller.composicionCambiada.connect(self._aplicar_composicion)
         self.controller.mensaje.connect(self._avisar)
         self.grafico.posicionCambiada.connect(self._mostrar_lectura)
+
+        for clave, casilla in self.casillas_bandas.items():
+            casilla.toggled.connect(
+                lambda marcado, c=clave: self._bandas_cambiadas(**{c: marcado}))
+        # editingFinished y no textChanged: aplicar en cada tecla recalcularia
+        # la firma a media palabra, con rangos que el usuario no termino de
+        # escribir.
+        self.campo_rangos.editingFinished.connect(self._rangos_cambiados)
+        self.boton_bandas.toggled.connect(self.panel_bandas.setVisible)
+        self.controller.mascaraCambiada.connect(self._mostrar_mascara)
 
         QgsProject.instance().layersAdded.connect(self.recargar_capas)
         QgsProject.instance().layersRemoved.connect(self.recargar_capas)
@@ -464,8 +535,17 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         for w in (self.combo_preset, self.combo_realce, self.lista,
                   self.boton_guardar, self.boton_renombrar, self.boton_quitar,
                   self.boton_csv, self.boton_guardar_lib,
-                  self.combo_paleta, self.boton_rgb):
+                  self.combo_paleta, self.boton_rgb,
+                  self.campo_rangos, self.boton_bandas):
             w.setEnabled(activo)
+        for casilla in self.casillas_bandas.values():
+            casilla.setEnabled(activo)
+        # La casilla de la bbl depende del archivo, no del panel. Sin esta
+        # linea _habilitar corre despues de _mostrar_mascara y vuelve a
+        # encenderla sobre un cubo que no trae ninguna lista.
+        mascara = self.controller.mask
+        self.casillas_bandas["usar_bbl"].setEnabled(
+            activo and mascara is not None and mascara.hay_bbl)
         # Extraer solo tiene sentido sobre un HDF-EOS5: sobre un ENVI ya
         # extraido el boton no haria nada util.
         self.boton_extraer.setEnabled(activo and self.es_hdf5_abierto())
@@ -592,6 +672,34 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.estado.setText(
             "Transecto %s = %d  -  %d pixeles resumidos (media, minimo y "
             "maximo)" % (eje.upper(), posicion, total))
+
+    def _bandas_cambiadas(self, **cambios):
+        if self._bloqueado:
+            return
+        self.controller.on_mask_changed(**cambios)
+
+    def _rangos_cambiados(self):
+        if self._bloqueado:
+            return
+        self.controller.on_mask_changed(
+            rangos=parsear_rangos(self.campo_rangos.text()))
+
+    def _mostrar_mascara(self, mascara):
+        """Pone los controles y el grafico al dia con la mascara vigente."""
+        self._bloqueado = True
+        for clave, casilla in self.casillas_bandas.items():
+            casilla.setChecked(bool(getattr(mascara, clave)))
+        # La casilla de la bbl no tiene sentido si el archivo no la trae.
+        self.casillas_bandas["usar_bbl"].setEnabled(mascara.hay_bbl)
+        if not mascara.hay_bbl:
+            self.casillas_bandas["usar_bbl"].setToolTip(
+                "Este archivo no trae lista de bandas malas")
+        texto = formatear_rangos(mascara.rangos)
+        if texto != self.campo_rangos.text():
+            self.campo_rangos.setText(texto)
+        self._bloqueado = False
+        self.cuenta_bandas.setText(mascara.describir())
+        self.grafico.set_descartados(mascara.tramos_malos())
 
     def _mostrar_lectura(self, longitud):
         cubo = self.controller.cube

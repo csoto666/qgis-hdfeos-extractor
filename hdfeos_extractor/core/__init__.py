@@ -7,6 +7,7 @@ arrastrar QGIS detras. Todo lo que este paquete necesita es numpy; GDAL y
 xarray se usan si estan y no se exigen.
 """
 
+from .bandas import MascaraBandas, parsear_rangos
 from .colormap import PALETAS, colorear
 from .cube import CubeError, HyperspectralCube
 from .hdf5 import Hdf5Source, es_hdf5
@@ -20,6 +21,7 @@ from .spectral import (Signature, SpectralProfile, signature_from_pixel,
                        spectral_angle, statistics)
 
 __all__ = [
+    "MascaraBandas", "parsear_rangos",
     "PALETAS", "colorear",
     "CubeError", "HyperspectralCube",
     "Hdf5Source", "es_hdf5",

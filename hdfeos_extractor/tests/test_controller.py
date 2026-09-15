@@ -181,9 +181,10 @@ def test_cambiar_una_banda_mueve_los_marcadores(ctrl):
     """Es la mitad del enlace entre las dos vistas: el grafico tiene que
     decir donde esta mirando la imagen."""
     espia = Espia(ctrl.composicionCambiada)
-    ctrl.on_rgb_changed(red=2450.0)
+    ultima = float(longitudes_patron()[-1])
+    ctrl.on_rgb_changed(red=ultima)
     assert espia.veces == 1
-    assert ctrl.marcadores_rgb()[0] == pytest.approx(2450.0)
+    assert ctrl.marcadores_rgb()[0] == pytest.approx(ultima)
 
 
 def test_los_marcadores_se_ajustan_a_las_bandas_reales(ctrl):

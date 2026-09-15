@@ -156,14 +156,19 @@ class RGBComposer(object):
                 if all(lo - margen <= b <= hi + margen for b in bandas)]
 
     def bands_of(self, cube):
-        """Indices de banda que este compositor usaria sobre ``cube``."""
-        return tuple(cube.band_index(w)
+        """Indices de banda que este compositor usaria sobre ``cube``.
+
+        Se piden solo bandas buenas: un preset que cae dentro de una ventana
+        de absorcion devolveria una banda de puro ruido, y la imagen saldria
+        con textura que no existe en el terreno -y que el usuario
+        interpretaria-.
+        """
+        return tuple(cube.band_index(w, solo_buenas=True)
                      for w in (self.red, self.green, self.blue))
 
     def wavelengths_of(self, cube):
         """Longitudes de onda reales que se usarian, ya ajustadas al sensor."""
-        return tuple(cube.nearest_wavelength(w)
-                     for w in (self.red, self.green, self.blue))
+        return tuple(float(cube.wavelengths[i]) for i in self.bands_of(cube))
 
     # -- composicion --------------------------------------------------------
     def create_composite(self, cube, as_uint8=True, preview=False,

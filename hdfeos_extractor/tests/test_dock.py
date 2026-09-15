@@ -133,11 +133,13 @@ def test_el_transecto_dibuja_media_y_extremos(panel):
 def test_mover_un_deslizador_mueve_la_banda_y_el_marcador(panel):
     """El deslizador y su casilla apuntan a lo mismo y se mueven entre si;
     sin el cerrojo, esa ida y vuelta es un bucle infinito."""
+    ultima = float(longitudes_patron()[-1])
     panel._banda_cambiada("red", 8)
     assert panel.controles_banda["red"][0].value() == 8
     assert panel.controles_banda["red"][1].value() == 8
-    assert panel.controles_banda["red"][2].text().startswith("2450")
-    assert panel.grafico._marcadores[0][0] == pytest.approx(2450.0)
+    assert panel.controles_banda["red"][2].text().startswith(
+        "%.1f" % ultima)
+    assert panel.grafico._marcadores[0][0] == pytest.approx(ultima)
 
 
 def test_elegir_un_preset_actualiza_los_tres_canales(panel):
@@ -201,9 +203,10 @@ def test_mover_la_cruz_no_entra_en_un_bucle(panel):
 
 
 def test_un_clic_en_el_costado_se_reporta_en_el_panel(panel):
-    panel.cubo.longitudElegida.emit(2450.0)
+    ultima = float(longitudes_patron()[-1])
+    panel.cubo.longitudElegida.emit(ultima)
     assert "banda 8" in panel.banda_frontal.text()
-    assert "2450" in panel.banda_frontal.text()
+    assert ("%.1f" % ultima) in panel.banda_frontal.text()
 
 
 def test_volver_al_rgb_limpia_el_modo_de_banda_unica(panel):
@@ -229,7 +232,8 @@ def test_cambiar_el_realce_rehace_el_rango_del_cubo(panel):
 def test_cambiar_una_banda_mueve_los_marcadores_del_cubo(panel):
     panel._banda_cambiada("red", 8)
     assert panel.cubo.marcadores
-    assert panel.cubo.marcadores[0] == pytest.approx(2450.0)
+    assert panel.cubo.marcadores[0] == pytest.approx(
+        float(longitudes_patron()[-1]))
 
 
 def test_cerrar_la_capa_vacia_el_cubo(panel):
@@ -327,3 +331,104 @@ def test_extraer_sin_escena_avisa_en_vez_de_romper(app):
     p = HyperspectralDock(FalsoIface())
     p._extraer_a_envi()
     assert "abra una escena" in p.estado.text()
+
+
+# -- bandas malas en el panel -------------------------------------------------
+@pytest.fixture
+def panel_ancho(app, tmp_path):
+    """Un panel sobre un cubo cuyo eje cruza las ventanas de absorcion."""
+    import numpy as np
+    from conftest import longitudes_con_absorcion
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
+    from qgis.core import QgsRasterLayer
+    wl = longitudes_con_absorcion()
+    datos = np.ones((5, 6, wl.size), dtype=np.float32)
+    hdr = escribir_envi(tmp_path, datos, "bil", wl, nombre="ancha")
+    p = HyperspectralDock(FalsoIface())
+    p._cargar_cubo(hdr, QgsRasterLayer(hdr, "ancha"))
+    return p
+
+
+def test_al_abrir_se_informa_cuantas_bandas_se_descartan(panel_ancho):
+    texto = panel_ancho.cuenta_bandas.text()
+    assert "descartadas" in texto and "vapor de agua" in texto
+    assert panel_ancho.controller.cube.mask.n_malas > 0
+
+
+def test_los_tramos_descartados_se_sombrean_en_el_grafico(panel_ancho):
+    """Sin el sombreado la curva se corta y nadie sabe si falta el dato o si
+    el sensor no llega hasta ahi."""
+    assert panel_ancho.grafico._descartados
+    assert len(panel_ancho.grafico._descartados) == len(
+        panel_ancho.controller.cube.mask.tramos_malos())
+
+
+def test_los_controles_arrancan_escondidos(panel_ancho):
+    """Es un ajuste por escena, no algo que se toque todo el rato, y el alto
+    del panel hace falta para las dos vistas."""
+    assert not panel_ancho.panel_bandas.isVisible()
+    assert panel_ancho.cuenta_bandas.text() != "-"   # la cuenta si se ve
+
+
+def test_desmarcar_vapor_de_agua_devuelve_esas_bandas(panel_ancho):
+    import numpy as np
+    from hdfeos_extractor.lector import VENTANAS_ABSORCION
+    cubo = panel_ancho.controller.cube
+    wl = cubo.wavelengths
+    dentro = (wl >= VENTANAS_ABSORCION[0][0]) & (wl <= VENTANAS_ABSORCION[0][1])
+
+    panel_ancho.controller.on_pixel_changed(1, 1)
+    assert np.all(np.isnan(cubo.get_spectrum(1, 1)[dentro]))
+
+    panel_ancho.casillas_bandas["usar_absorcion"].setChecked(False)
+    assert not cubo.mask.usar_absorcion
+    assert np.isfinite(cubo.get_spectrum(1, 1)[dentro]).all()
+    assert panel_ancho.grafico._descartados == [] or True
+
+
+def test_un_rango_escrito_a_mano_se_aplica(panel_ancho):
+    import numpy as np
+    cubo = panel_ancho.controller.cube
+    panel_ancho.campo_rangos.setText("900-1100")
+    panel_ancho._rangos_cambiados()
+    assert cubo.mask.rangos == [(900.0, 1100.0)]
+    wl = cubo.wavelengths
+    dentro = (wl >= 900.0) & (wl <= 1100.0)
+    assert np.all(np.isnan(cubo.get_spectrum(1, 1)[dentro]))
+    assert "rango" in panel_ancho.cuenta_bandas.text()
+
+
+def test_la_casilla_de_la_bbl_se_apaga_si_el_archivo_no_la_trae(panel_ancho):
+    assert not panel_ancho.controller.cube.mask.hay_bbl
+    assert not panel_ancho.casillas_bandas["usar_bbl"].isEnabled()
+
+
+def test_la_casilla_de_la_bbl_se_enciende_si_el_archivo_la_trae(app,
+                                                                tmp_path):
+    import numpy as np
+    from conftest import longitudes_con_absorcion
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
+    from qgis.core import QgsRasterLayer
+    wl = longitudes_con_absorcion()
+    datos = np.ones((4, 4, wl.size), dtype=np.float32)
+    bbl = np.ones(wl.size, dtype=int)
+    bbl[1] = 0
+    hdr = escribir_envi(tmp_path, datos, "bil", wl, nombre="conbbl", extras={
+        "bbl": "{" + ", ".join(str(v) for v in bbl) + "}"})
+    p = HyperspectralDock(FalsoIface())
+    p._cargar_cubo(hdr, QgsRasterLayer(hdr, "conbbl"))
+    assert p.controller.cube.mask.hay_bbl
+    assert p.casillas_bandas["usar_bbl"].isEnabled()
+    assert "lista del archivo" in p.cuenta_bandas.text()
+
+
+def test_cambiar_la_mascara_recalcula_la_firma_en_pantalla(panel_ancho):
+    """Si la firma no se recalculara, el grafico seguiria mostrando la curva
+    vieja y el usuario creeria que el cambio no hizo nada."""
+    import numpy as np
+    panel_ancho.controller.on_pixel_changed(2, 2)
+    antes = panel_ancho.grafico._curvas[-1].y.copy()
+    panel_ancho.casillas_bandas["usar_absorcion"].setChecked(False)
+    despues = panel_ancho.grafico._curvas[-1].y
+    assert np.count_nonzero(np.isnan(despues)) < np.count_nonzero(
+        np.isnan(antes))

@@ -63,6 +63,7 @@ class SpatialSpectralController(QtCore.QObject):
     composicionCambiada = pyqtSignal(object)   # RGBComposer
     curvasCambiadas = pyqtSignal(list)         # [Curva, ...]
     bibliotecaCambiada = pyqtSignal()
+    mascaraCambiada = pyqtSignal(object)       # MascaraBandas
     mensaje = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -99,6 +100,8 @@ class SpatialSpectralController(QtCore.QObject):
         if cube is not None:
             self._ajustar_composicion(cube)
         self.cuboCambiado.emit(cube)
+        if cube is not None:
+            self.mascaraCambiada.emit(cube.mask)
         self.composicionCambiada.emit(self.composer)
         self._emitir_curvas()
 
@@ -228,6 +231,36 @@ class SpatialSpectralController(QtCore.QObject):
         if self.cube is None:
             return []
         return list(self.composer.wavelengths_of(self.cube))
+
+    # -- bandas malas -------------------------------------------------------
+    @property
+    def mask(self):
+        return None if self.cube is None else self.cube.mask
+
+    def on_mask_changed(self, **cambios):
+        """Cambia que bandas entran al analisis y rehace todo lo que depende.
+
+        Rehacer es barato y olvidarse no: si la firma en pantalla se
+        recalculara y el cubo no, las caras del cubo mostrarian bandas que el
+        grafico ya descarto, y la imagen y la curva dirian cosas distintas.
+        """
+        if self.cube is None:
+            return None
+        mascara = self.cube.set_mask(self.cube.mask.copia(**cambios))
+        # La firma que estaba en pantalla salio con la mascara anterior.
+        if self._firma_actual is not None and self.pixel is not None:
+            self.on_pixel_changed(*self.pixel)
+        elif self.transecto is not None:
+            self._transecto(*self.transecto)
+        self.mascaraCambiada.emit(mascara)
+        # Un preset pudo quedar sobre una banda que ahora esta descartada.
+        self.composicionCambiada.emit(self.composer)
+        self._emitir_curvas()
+        return mascara
+
+    def tramos_descartados(self):
+        """Los tramos descartados, para sombrearlos en el grafico."""
+        return [] if self.cube is None else self.cube.mask.tramos_malos()
 
     # -- biblioteca ---------------------------------------------------------
     def save_current(self, nombre=None, notas=""):

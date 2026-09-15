@@ -57,6 +57,7 @@ modelador— pero deja de ser un peaje obligatorio para poder mirar la escena.
 | Cambiar **R/G/B** | La imagen se recompone al instante, y el gráfico marca dónde caen esas tres bandas |
 | Arrastrar sobre el **cubo** | La cruz recorre la escena y las dos caras laterales cambian con ella |
 | Clic en un **costado del cubo** | Esa banda pasa a la cara frontal |
+| **Bandas malas** | Las descarta del análisis y las sombrea en el gráfico |
 
 ### Extraer
 
@@ -108,6 +109,48 @@ un costado lleva esa banda al frente: es el gesto natural frente a un cubo
 No hay OpenGL ni biblioteca 3D. La proyección es oblicua y se dibuja con
 QPainter aplicando una transformación afín a cada cara.
 
+## Bandas malas
+
+Un cubo hiperespectral siempre trae bandas que no sirven, y arrastrarlas
+cuesta dos cosas distintas. La visible es que el gráfico se llena de picos que
+tapan la forma de la firma. **La cara es que entran en la media, en la
+desviación y en el ángulo espectral como si fueran mediciones**, y ahí ya no se
+ven: sólo corren los números.
+
+El plugin las descarta por cuatro criterios, que se combinan y se encienden por
+separado:
+
+| Criterio | Qué descarta | Por defecto |
+|---|---|---|
+| **Lista del archivo** | La `bbl` que trae el propio producto | Activo si el archivo la incluye |
+| **Vapor de agua** | 1340–1460 y 1790–1960 nm | Activo |
+| **Extremos** | Por debajo de 400 y por encima de 2450 nm | Activo |
+| **Rangos propios** | Lo que escribas: `1340-1460, 900` | Vacío |
+
+Una banda sobrevive sólo si ninguno la descarta. En la duda, fuera — que es
+además lo que hace el extractor al escribir la `bbl`, así que el explorador y
+el ENVI extraído coinciden.
+
+La banda descartada sale como **NaN**, y de ahí en adelante todo el resto lo
+ignora solo: el gráfico corta la curva, `nanmean` la saltea, el ángulo
+espectral la excluye y el realce del cubo deja de estar sesgado por el ruido de
+las ventanas de absorción.
+
+Tres detalles que importan:
+
+- **El gráfico sombrea los tramos descartados.** Sin eso la curva simplemente
+  se corta y no se sabe si falta el dato o si el sensor no llega hasta ahí.
+- **`get_band` no se enmascara.** La máscara limpia el análisis espectral, no
+  impide mirar una banda: quien quiere ver cómo se ve la de 1400 nm tiene
+  derecho a verla, en ruido, pero verla.
+- **El compositor RGB no cae en una banda descartada.** Un preset que aterriza
+  dentro de una ventana de absorción devolvería ruido puro, y la imagen saldría
+  con textura que no existe en el terreno —y que alguien interpretaría—.
+
+Sin eje espectral en nanómetros los dos criterios por longitud de onda se
+apagan solos: sobre un eje que es el número de banda, «descartar por debajo de
+400» borraría el cubo entero.
+
 ## La composición RGB se elige por longitud de onda
 
 No por número de banda. Es lo que vuelve portables los presets: `rojo = 665 nm`
@@ -157,6 +200,7 @@ hdfeos_extractor/
     geo.py       conversión mapa ↔ píxel
     rgb.py       composición y realce
     colormap.py  paletas para pintar un plano del cubo
+    bandas.py    qué banda entra al análisis y cuál no
     spectral.py  firmas, estadísticas, ángulo espectral
     library.py   biblioteca persistente
 ```

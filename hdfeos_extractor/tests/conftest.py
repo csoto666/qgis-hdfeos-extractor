@@ -41,8 +41,21 @@ def cubo_patron(lineas=LINEAS, muestras=MUESTRAS, bandas=BANDAS):
 
 
 def longitudes_patron(bandas=BANDAS):
-    """Eje espectral regular de 450 a 2450 nm."""
-    return np.linspace(450.0, 2450.0, bandas)
+    """Eje espectral de 450 a 1300 nm.
+
+    Se queda corto a proposito: asi no toca las ventanas de absorcion de vapor
+    de agua ni los extremos del rango, y la mascara de bandas malas no
+    descarta nada. Las pruebas que usan este eje son sobre los lectores y la
+    geometria, y con bandas enmascaradas de por medio estarian midiendo dos
+    cosas a la vez. La mascara tiene sus propias pruebas, con un eje que si
+    cruza esas ventanas.
+    """
+    return np.linspace(450.0, 1300.0, bandas)
+
+
+def longitudes_con_absorcion(bandas=40):
+    """Eje de 400 a 2500 nm: cruza las dos ventanas y los dos extremos."""
+    return np.linspace(400.0, 2500.0, bandas)
 
 
 def escribir_envi(carpeta, datos, intercalado="bil", wavelengths=None,
@@ -179,7 +192,8 @@ BANDAS_H5 = 24
 
 
 def longitudes_h5(bandas=BANDAS_H5):
-    return np.linspace(450.0, 2450.0, bandas)
+    """Igual que longitudes_patron: fuera de las ventanas de absorcion."""
+    return np.linspace(450.0, 1300.0, bandas)
 
 
 def reflectancia_patron(lineas=LINEAS, muestras=MUESTRAS, bandas=BANDAS_H5):

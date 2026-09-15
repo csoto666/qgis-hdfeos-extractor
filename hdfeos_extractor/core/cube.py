@@ -40,6 +40,7 @@ import os
 
 import numpy as np
 
+from .bandas import MascaraBandas
 from .envi import EnviError, EnviSource
 from .hdf5 import Hdf5Source, es_hdf5
 from .sources import GdalSource, MemorySource
@@ -84,6 +85,15 @@ class HyperspectralCube(object):
         self.fwhm = getattr(source, "fwhm", None)
         self.bbl = getattr(source, "bbl", None)
         self.band_names = getattr(source, "nombres_banda", None)
+
+        # Las ventanas de absorcion y los extremos estan en nanometros, asi
+        # que solo se encienden si el cubo trae eje espectral. Sobre un eje
+        # que es el indice de banda, "descartar por debajo de 400" borraria
+        # casi todo el cubo sin que nadie entienda por que.
+        self.mask = MascaraBandas(
+            self._wavelengths, bbl=self.bbl,
+            usar_absorcion=self.has_wavelengths,
+            usar_extremos=self.has_wavelengths)
 
     # -- apertura -----------------------------------------------------------
     @classmethod
@@ -157,14 +167,21 @@ class HyperspectralCube(object):
     def unidad_espectral(self):
         return "nm" if self.has_wavelengths else "banda"
 
-    def band_index(self, wavelength):
+    def band_index(self, wavelength, solo_buenas=False):
         """Indice de la banda mas cercana a ``wavelength``.
 
         Se usa la mas cercana y no una coincidencia exacta a proposito: nadie
         conoce de memoria que la banda del rojo de este sensor cae en 664.7 y
         no en 665, y exigir el valor exacto convertiria cada preset en una
         tabla por sensor.
+
+        Con ``solo_buenas`` se salta las bandas descartadas. Lo usa el
+        compositor RGB: un preset que cae dentro de una ventana de absorcion
+        devolveria una banda de puro ruido, y la imagen saldria con textura
+        que no existe en el terreno.
         """
+        if solo_buenas:
+            return self.mask.indice_bueno_mas_cercano(wavelength)
         return int(np.argmin(np.abs(self._wavelengths - float(wavelength))))
 
     def nearest_wavelength(self, wavelength):
@@ -214,10 +231,16 @@ class HyperspectralCube(object):
         if not (0 <= x < self.samples and 0 <= y < self.lines):
             raise CubeError("Pixel (%d, %d) fuera de la imagen %dx%d"
                             % (x, y, self.samples, self.lines))
-        return self._limpiar(self.source.read_pixel(y, x))
+        return self.mask.aplicar(self._limpiar(self.source.read_pixel(y, x)))
 
     def get_band(self, wavelength=None, index=None):
         """Una banda completa como matriz ``(y, x)``, con cache.
+
+        Esta es la unica lectura que NO aplica la mascara de bandas malas, y
+        es deliberado: la mascara existe para limpiar el analisis espectral,
+        no para impedir mirar una banda. Quien quiere ver como se ve la banda
+        de 1400 nm tiene derecho a verla -en ruido, pero verla-. Lo que no
+        debe pasar es que ese ruido entre en una firma o en una media.
 
         El cache es lo que hace que mover los selectores R/G/B se sienta
         instantaneo: volver a una banda ya vista no toca el disco.
@@ -252,12 +275,12 @@ class HyperspectralCube(object):
                 raise CubeError("Columna %d fuera de 0..%d"
                                 % (p, self.samples - 1))
             bruto = self.source.read_window(0, self.lines, p, p + 1)
-            return self._limpiar(bruto[:, 0, :])
+            return self.mask.aplicar(self._limpiar(bruto[:, 0, :]))
         if eje == "y":
             if not 0 <= p < self.lines:
                 raise CubeError("Fila %d fuera de 0..%d" % (p, self.lines - 1))
             bruto = self.source.read_window(p, p + 1, 0, self.samples)
-            return self._limpiar(bruto[0, :, :])
+            return self.mask.aplicar(self._limpiar(bruto[0, :, :]))
         raise CubeError("axis tiene que ser 'x' o 'y', llego %r" % axis)
 
     def get_x_profile(self, x):
@@ -284,8 +307,8 @@ class HyperspectralCube(object):
         y1 = min(self.lines - 1, y1)
         if x1 < x0 or y1 < y0:
             raise CubeError("El area seleccionada no toca la imagen")
-        return self._limpiar(
-            self.source.read_window(y0, y1 + 1, x0, x1 + 1))
+        return self.mask.aplicar(self._limpiar(
+            self.source.read_window(y0, y1 + 1, x0, x1 + 1)))
 
     def get_pixels(self, coords):
         """Espectros de una lista de ``(x, y)``: matriz ``(n_pixeles, banda)``.
@@ -297,6 +320,15 @@ class HyperspectralCube(object):
         if not coords:
             raise CubeError("La lista de pixeles esta vacia")
         return np.vstack([self.get_spectrum(x, y) for x, y in coords])
+
+    def set_mask(self, mask):
+        """Cambia la mascara de bandas malas.
+
+        El cache de bandas no se toca: guarda lecturas sin enmascarar, que es
+        justamente lo que ``get_band`` sigue devolviendo.
+        """
+        self.mask = mask
+        return self.mask
 
     # -- resolucion de despliegue vs resolucion de analisis ------------------
     def preview_band(self, wavelength=None, index=None, max_lado=1024):

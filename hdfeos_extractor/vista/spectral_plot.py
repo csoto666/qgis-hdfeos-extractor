@@ -64,6 +64,9 @@ COLOR_FONDO = "#ffffff"
 COLOR_EJES = "#606060"
 COLOR_REJILLA = "#e4e4e4"
 COLOR_MARCADORES = ("#d62728", "#2ca02c", "#1f77b4")   # R, G, B
+#: Sombreado de los tramos descartados. Muy tenue a proposito: tiene que
+#: explicar el hueco sin competir con las curvas.
+COLOR_DESCARTADO = "#c9ccd4"
 
 
 def color_de(indice):
@@ -124,6 +127,7 @@ class _Lienzo(QtWidgets.QWidget):
         self.setAutoFillBackground(True)
         self.curvas = []
         self.marcadores = []          # [(longitud_de_onda, color), ...]
+        self.descartados = []         # [(desde, hasta), ...] en nm
         self.etiqueta_x = "Longitud de onda (nm)"
         self.etiqueta_y = "Reflectancia"
         self._cursor_x = None
@@ -137,6 +141,10 @@ class _Lienzo(QtWidgets.QWidget):
 
     def set_marcadores(self, marcadores):
         self.marcadores = list(marcadores)
+        self.update()
+
+    def set_descartados(self, tramos):
+        self.descartados = list(tramos)
         self.update()
 
     def set_etiquetas(self, x, y):
@@ -206,6 +214,7 @@ class _Lienzo(QtWidgets.QWidget):
             p.end()
             return
         self._pintar_rejilla(p, area)
+        self._pintar_descartados(p, area)
         self._pintar_marcadores(p, area)
         self._pintar_curvas(p)
         self._pintar_cursor(p, area)
@@ -257,6 +266,27 @@ class _Lienzo(QtWidgets.QWidget):
         p.drawText(QtCore.QRectF(-largo / 2.0, -8, largo, 16),
                    _enum(Qt, "AlignmentFlag", "AlignCenter"), rotulo)
         p.restore()
+
+    def _pintar_descartados(self, p, area):
+        """Sombrea los tramos de bandas descartadas.
+
+        Sin esto, la curva simplemente se corta y el usuario no sabe si ahi
+        falta el dato o si el sensor no llega. Con el sombreado, el hueco se
+        explica solo.
+        """
+        if not self.descartados:
+            return
+        x0, x1, _, _ = self.limites()
+        p.setPen(_enum(Qt, "PenStyle", "NoPen"))
+        p.setBrush(QtGui.QColor(COLOR_DESCARTADO))
+        for desde, hasta in self.descartados:
+            if hasta < x0 or desde > x1:
+                continue
+            izq, _ = self._a_pantalla(max(desde, x0), 0)
+            der, _ = self._a_pantalla(min(hasta, x1), 0)
+            p.drawRect(QtCore.QRectF(izq, area.top(),
+                                     max(1.0, der - izq), area.height()))
+        p.setBrush(_enum(Qt, "BrushStyle", "NoBrush"))
 
     def _pintar_marcadores(self, p, area):
         """Las tres verticales que dicen que bandas alimentan el RGB.
@@ -448,6 +478,7 @@ class SpectralPlot(QtWidgets.QWidget):
         self.usa_pyqtgraph = bool(pg) and not forzar_lienzo
         self._curvas = []
         self._marcadores = []
+        self._descartados = []
         self.etiqueta_x = "Longitud de onda (nm)"
 
         caja = QtWidgets.QVBoxLayout(self)
@@ -503,6 +534,11 @@ class SpectralPlot(QtWidgets.QWidget):
                             if w is not None and np.isfinite(w)]
         self._redibujar()
 
+    def set_descartados(self, tramos):
+        """Los tramos de bandas descartadas, para sombrearlos."""
+        self._descartados = [(float(a), float(b)) for a, b in tramos]
+        self._redibujar()
+
     def clear(self):
         self._curvas = []
         self._redibujar()
@@ -511,9 +547,15 @@ class SpectralPlot(QtWidgets.QWidget):
         if not self.usa_pyqtgraph:
             self._grafico.set_curvas(self._curvas)
             self._grafico.set_marcadores(self._marcadores)
+            self._grafico.set_descartados(self._descartados)
             return
         self._grafico.clear()
         self._grafico.addItem(self._linea, ignoreBounds=True)
+        for desde, hasta in self._descartados:
+            zona = pg.LinearRegionItem(values=(desde, hasta), movable=False,
+                                       brush=pg.mkBrush(COLOR_DESCARTADO))
+            zona.setZValue(-10)        # detras de las curvas
+            self._grafico.addItem(zona, ignoreBounds=True)
         for valor, color in self._marcadores:
             self._grafico.addItem(
                 pg.InfiniteLine(pos=valor, angle=90, pen=pg.mkPen(
