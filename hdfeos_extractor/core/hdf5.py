@@ -131,7 +131,7 @@ class Hdf5Source(object):
                        self._georreferencia_de_gdal):
             hallada = buscar(lineas, muestras)
             if hallada is not None and hallada.tiene_mapa:
-                return hallada
+                return self._completar_src(hallada)
 
         try:
             ruta_lon, ruta_lat = self.escena.hallar_geolocalizacion()
@@ -289,6 +289,36 @@ class Hdf5Source(object):
         if unidim:
             partes.append("vectores 1D: " + ", ".join(unidim))
         return ". ".join(partes)
+
+    def _completar_src(self, georref):
+        """Pone el codigo EPSG del producto cuando el SRC no se identifica.
+
+        Venga de donde venga la geotransformacion, si el sistema de
+        referencia no se puede identificar hay que buscarlo aparte. El caso
+        que lo motiva: leyendo con GDAL, su driver entrega las coordenadas
+        bien pero describe la proyeccion como PROJCS["unnamed"] con el datum
+        "Not specified" y sin codigo de autoridad. Es geometricamente
+        correcta, pero QGIS no la reconoce, le aplica el SRC del proyecto y
+        la escena se va al otro lado del continente.
+
+        El producto lo dice aparte -Tanager pone epsg_code en el grupo del
+        grid- y ese codigo, que si viene del productor, manda sobre lo que
+        haya deducido un driver.
+        """
+        from .georef import src_de_atributos, wkt_identificable
+        if georref.epsg:
+            return georref
+        wkt, epsg = src_de_atributos(self._atributos_globales())
+        if epsg:
+            georref.epsg = epsg
+            # Un WKT sin autoridad al lado de un EPSG explicito solo estorba:
+            # wkt_de() lo preferiria y volveriamos al SRC que nadie reconoce.
+            if georref.wkt and not wkt_identificable(georref.wkt):
+                georref.wkt = None
+            georref.nota = ""
+        elif wkt and not georref.wkt:
+            georref.wkt = wkt
+        return georref
 
     def _georreferencia_de_encuadre(self, lineas, muestras):
         """El bloque de encuadre que el productor escribe como JSON.

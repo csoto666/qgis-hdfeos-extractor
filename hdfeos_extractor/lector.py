@@ -240,6 +240,15 @@ class BackendH5(object):
         return np.asarray(self._ds[ruta][:, y0:y1, x0:x1])
 
 
+def _a_texto(valor):
+    """Lo que devuelve un array de texto de GDAL, convertido a str."""
+    if isinstance(valor, (list, tuple)):
+        valor = valor[0] if valor else None
+    if isinstance(valor, bytes):
+        return valor.decode("utf-8", "replace")
+    return None if valor is None else str(valor)
+
+
 class BackendGdal(object):
     """Respaldo con GDAL, que siempre viene con QGIS."""
 
@@ -265,6 +274,7 @@ class BackendGdal(object):
         # en los metadatos de la raiz, con la ruta del dataset como prefijo.
         # Ahi viven las longitudes de onda, el FWHM y el valor de relleno.
         self._raiz = dict(raiz.GetMetadata() or {})
+        self.ruta = ruta
         self._cache = {}
 
     def cerrar(self):
@@ -312,14 +322,18 @@ class BackendGdal(object):
         return dict(self._raiz)
 
     def texto_estructura(self):
-        """El StructMetadata, si GDAL lo expone entre los metadatos.
+        """El StructMetadata leido con GDAL, por los dos caminos que hay.
 
-        Se busca por nombre exacto y, si no aparece, por coincidencia: cada
-        version del driver lo bautiza de una forma -con punto, con guion
-        bajo, con o sin el grupo delante- y quedarse en un solo nombre deja
-        sin georreferencia a un producto que si la trae. Con el respaldo de
-        GDAL puede no estar en absoluto; entonces manda h5py, que lo lee
-        siempre porque ahi es un dataset normal.
+        Primero los metadatos, por si el driver lo expone ahi. Con HDF5 no lo
+        hace -y ese fue el fallo-: el StructMetadata no es un atributo sino
+        un dataset de texto, asi que no aparece entre los metadatos de la
+        raiz y este metodo devolvia None. El producto traia su
+        georreferencia y el explorador no la veia por el unico motivo de que
+        h5py no estuviera instalado.
+
+        El segundo camino es la API multidimensional, que si alcanza los
+        datasets de texto. Necesita GDAL 3.1 o mas nuevo; si no esta, se
+        devuelve None y quedan los caminos siguientes.
         """
         for clave in (CLAVE_ESTRUCTURA_GDAL, "StructMetadata.0"):
             if clave in self._raiz:
@@ -327,6 +341,31 @@ class BackendGdal(object):
         for clave, valor in self._raiz.items():
             if "structmetadata" in clave.lower():
                 return valor
+        return self._estructura_multidim()
+
+    def _estructura_multidim(self):
+        """Lee HDFEOS INFORMATION/StructMetadata.0 como array de texto."""
+        bandera = getattr(self._gdal, "OF_MULTIDIM_RASTER", None)
+        if bandera is None:                # pragma: no cover - GDAL < 3.1
+            return None
+        ds = None
+        try:
+            ds = self._gdal.OpenEx(self.ruta, bandera)
+            raiz = ds.GetRootGroup() if ds is not None else None
+            if raiz is None:
+                return None
+            for nombre in ("HDFEOS INFORMATION", "HDFEOS_INFORMATION"):
+                grupo = raiz.OpenGroup(nombre)
+                if grupo is None:
+                    continue
+                for arr in ("StructMetadata.0", "StructMetadata_0"):
+                    md = grupo.OpenMDArray(arr)
+                    if md is not None:
+                        return _a_texto(md.Read())
+        except Exception:                  # pragma: no cover - driver viejo
+            return None
+        finally:
+            ds = None
         return None
 
     def _leer_crudo(self, ruta, y0, ny, x0=0, nx=None):

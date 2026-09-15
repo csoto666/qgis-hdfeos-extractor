@@ -168,7 +168,7 @@ def estructura_grid(nx, ny, ulx=400000.0, uly=4500000.0, pixel=30.0, zona=18):
 def escribir_hdfeos(carpeta, reflectancia, wavelengths, fwhm=None,
                     buenas=None, relleno_en=(), nombre="escena",
                     geolocalizacion=True, estructura=None,
-                    ejes=None, atributos=None):
+                    ejes=None, atributos=None, capas_2d=()):
     """Escribe un HDF-EOS5 con la estructura de los productos reales.
 
     ``reflectancia`` llega en ejes (y, x, banda) y en reflectancia; se guarda
@@ -223,6 +223,13 @@ def escribir_hdfeos(carpeta, reflectancia, wavelengths, fwhm=None,
             base = "HDFEOS/GRIDS/HYP/"
             f.create_dataset(base + "x", data=np.asarray(x, dtype=np.float64))
             f.create_dataset(base + "y", data=np.asarray(y, dtype=np.float64))
+        # Capas auxiliares del tamano de la escena, como las del producto
+        # real. Ademas de ser realistas hacen falta: con un solo array, GDAL
+        # abre el archivo con el driver HDF5Image en vez de listar
+        # subdatasets, y el respaldo de GDAL no tiene por donde entrar.
+        for nombre_capa in capas_2d:
+            f.create_dataset(base + nombre_capa,
+                             data=np.zeros(datos.shape[:2], dtype=np.float32))
         for clave, valor in (atributos or {}).items():
             f.attrs[clave] = valor
     return ruta

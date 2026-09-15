@@ -832,3 +832,21 @@ def _cargar_json(texto):
         return json.loads(texto[inicio:fin + 1])
     except (ValueError, TypeError):
         return None
+
+
+def wkt_identificable(wkt):
+    """True si el WKT dice de QUE sistema habla, no solo como proyecta.
+
+    El driver de HDF5 de GDAL entrega ``PROJCS["unnamed"]`` con el datum
+    "Not specified" y sin codigo de autoridad. Describe la geometria -es UTM
+    16N- pero no identifica el sistema, y QGIS no lo casa con ninguno
+    conocido: le aplica el SRC del proyecto y la escena aterriza en otro
+    continente. Vale menos que un codigo EPSG, y hay que saber distinguirlo
+    de un WKT completo, que vale mas.
+    """
+    if not wkt:
+        return False
+    texto = wkt.lower()
+    if "unnamed" in texto or "not specified" in texto or "unknown" in texto:
+        return False
+    return "authority" in texto

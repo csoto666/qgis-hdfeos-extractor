@@ -128,10 +128,39 @@ def test_los_puntos_de_control_se_recortan_a_la_vista():
 
 
 # -- sistema de referencia ---------------------------------------------------
-def test_el_wkt_del_archivo_gana_sobre_el_epsg():
-    g = Georreferencia(gt=GT, wkt='PROJCS["lo que diga el archivo"]',
-                       epsg=4326)
-    assert wkt_de(g) == 'PROJCS["lo que diga el archivo"]'
+def test_el_wkt_del_archivo_gana_cuando_identifica_su_sistema():
+    """Un WKT completo viene del archivo y es lo mas fiel que hay."""
+    propio = ('PROJCS["lo que diga el archivo",'
+              'AUTHORITY["EPSG","32618"]]')
+    g = Georreferencia(gt=GT, wkt=propio, epsg=4326)
+    assert wkt_de(g) == propio
+
+
+def test_un_wkt_que_no_identifica_su_sistema_pierde_contra_el_epsg():
+    """El fallo que mandaba la escena al otro lado del continente.
+
+    El driver de HDF5 de GDAL describe la proyeccion como PROJCS["unnamed"]
+    con el datum "Not specified" y sin autoridad. Es geometricamente
+    correcta, pero QGIS no la casa con ningun sistema conocido: le aplica el
+    SRC del proyecto, y ahi los metros pasan a leerse como grados.
+    """
+    pytest.importorskip("osgeo.osr", reason="hace falta GDAL")
+    from osgeo import osr
+
+    anonimo = ('PROJCS["unnamed",GEOGCS["Unknown datum based upon the WGS 84 '
+               'ellipsoid",DATUM["Not specified (based on WGS 84 spheroid)",'
+               'SPHEROID["WGS 84",6378137,298.257223563]]],'
+               'PROJECTION["Transverse_Mercator"],UNIT["metre",1]]')
+    g = Georreferencia(gt=GT, wkt=anonimo, epsg=32618)
+    sr = osr.SpatialReference()
+    sr.ImportFromWkt(wkt_de(g))
+    assert sr.GetAuthorityCode(None) == "32618"
+
+
+def test_sin_epsg_se_conserva_el_wkt_aunque_sea_incompleto():
+    """Vale mas una proyeccion sin nombre que ninguna proyeccion."""
+    anonimo = 'PROJCS["unnamed",PROJECTION["Transverse_Mercator"]]'
+    assert wkt_de(Georreferencia(gt=GT, wkt=anonimo)) == anonimo
 
 
 def test_sin_src_no_se_inventa_ninguno():

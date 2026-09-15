@@ -54,6 +54,7 @@ import tempfile
 
 import numpy as np
 
+from ..core.georef import wkt_identificable
 from ..core.rgb import estirar
 
 try:
@@ -128,17 +129,22 @@ def wkt_de(georref):
     """
     if georref is None:
         return None
-    if georref.wkt:
+    # El orden es: WKT completo, codigo EPSG, WKT incompleto. Un WKT que
+    # identifica su sistema viene del archivo y es lo mas fiel. Uno que solo
+    # describe la geometria -PROJCS["unnamed"], datum "Not specified"- lo
+    # escribe algun driver a falta de algo mejor, y QGIS no lo reconoce: le
+    # asigna el SRC del proyecto y la escena aterriza en otro continente.
+    # Ante ese, cualquier codigo EPSG declarado por el productor es mejor.
+    if georref.wkt and wkt_identificable(georref.wkt):
         return georref.wkt
-    if not georref.epsg or osr is None:
-        return None
-    try:
-        src = osr.SpatialReference()
-        if src.ImportFromEPSG(int(georref.epsg)) != 0:
-            return None
-        return src.ExportToWkt()
-    except Exception:                      # pragma: no cover - OSR raro
-        return None
+    if georref.epsg and osr is not None:
+        try:
+            src = osr.SpatialReference()
+            if src.ImportFromEPSG(int(georref.epsg)) == 0:
+                return src.ExportToWkt()
+        except Exception:                  # pragma: no cover - OSR raro
+            pass
+    return georref.wkt or None
 
 
 def escribir_geotiff(ruta, rgba, georref):

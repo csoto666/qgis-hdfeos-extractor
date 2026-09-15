@@ -810,3 +810,100 @@ def test_el_encabezado_real_no_se_confunde_con_las_dimensiones():
         "\t\tEND_GROUP=GRID_1")
     resultado = parsear_struct_metadata(con_dimensiones)
     assert resultado[4] == 785 and resultado[5] == 655
+
+
+# -- el SRC tiene que ser identificable, no solo correcto ------------------
+def test_un_epsg_explicito_gana_a_un_wkt_anonimo():
+    """El fallo que mandaba la escena a Galapagos.
+
+    El driver de HDF5 de GDAL describe la proyeccion del producto como
+    PROJCS["unnamed"] con el datum "Not specified" y sin codigo de autoridad.
+    Es geometricamente correcta -es UTM 16N- pero QGIS no la casa con ningun
+    sistema conocido: le aplica el SRC del proyecto, y ahi las coordenadas
+    en metros se interpretan como grados y la escena se va al otro lado del
+    continente. El codigo que declara el productor tiene que ganar.
+    """
+    pytest.importorskip("osgeo.osr", reason="hace falta GDAL")
+    from osgeo import osr
+    from hdfeos_extractor.qgis_ui.exportar import wkt_de
+
+    anonimo = ('PROJCS["unnamed",GEOGCS["Unknown datum based upon the WGS 84 '
+               'ellipsoid",DATUM["Not specified (based on WGS 84 spheroid)",'
+               'SPHEROID["WGS 84",6378137,298.257223563]],'
+               'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],'
+               'PROJECTION["Transverse_Mercator"],'
+               'PARAMETER["central_meridian",-87],UNIT["metre",1]]')
+    g = Georreferencia(gt=(330480.0, 30.0, 0.0, 1472610.0, 0.0, -30.0),
+                       wkt=anonimo, epsg=32616)
+    sr = osr.SpatialReference()
+    sr.ImportFromWkt(wkt_de(g))
+    assert sr.GetAuthorityCode(None) == "32616"
+
+
+def test_un_wkt_con_autoridad_se_respeta():
+    """Cuando el WKT si identifica el sistema, es el del archivo y manda."""
+    from hdfeos_extractor.core.georef import wkt_identificable
+
+    assert wkt_identificable(
+        'PROJCS["WGS 84 / UTM zone 16N",AUTHORITY["EPSG","32616"]]')
+    assert not wkt_identificable('PROJCS["unnamed",DATUM["Not specified"]]')
+    assert not wkt_identificable(
+        'PROJCS["x",GEOGCS["Unknown datum based upon the WGS 84 ellipsoid"]]')
+    assert not wkt_identificable(None)
+
+
+def test_gdal_lee_el_structmetadata_aunque_no_este_en_los_metadatos(tmp_path):
+    """Sin h5py, el explorador leia con GDAL y no encontraba el grid.
+
+    El StructMetadata no es un atributo sino un dataset de texto, asi que no
+    aparece entre los metadatos de la raiz. El producto traia su
+    georreferencia y el explorador no la veia por el unico motivo de que
+    h5py no estuviera instalado, que es justo el caso de QGIS en macOS.
+    """
+    pytest.importorskip("h5py", reason="hace falta h5py para escribirlo")
+    pytest.importorskip("osgeo.gdal", reason="hace falta GDAL para leerlo")
+    from conftest import (escribir_hdfeos, estructura_grid, longitudes_h5,
+                          reflectancia_patron)
+    from hdfeos_extractor.lector import Escena
+
+    datos = reflectancia_patron(lineas=40, muestras=60)
+    alto, ancho = datos.shape[:2]
+    ruta = escribir_hdfeos(
+        tmp_path, datos, longitudes_h5(), geolocalizacion=False,
+        capas_2d=("nodata_pixels", "beta_cloud_mask"),
+        estructura=estructura_grid(nx=ancho, ny=alto, ulx=400000.0,
+                                   uly=4500000.0, pixel=30.0, zona=18))
+    escena = Escena(ruta, preferir_h5py=False)
+    try:
+        assert escena.backend.nombre == "GDAL"
+        texto = escena.backend.texto_estructura()
+        assert texto and "GridStructure" in texto
+        assert "UpperLeftPointMtrs" in texto
+    finally:
+        escena.backend.cerrar()
+
+
+def test_el_cubo_leido_con_gdal_se_ubica_igual(tmp_path):
+    """Con h5py o sin el, la georreferencia tiene que ser la misma."""
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    pytest.importorskip("osgeo.gdal", reason="hace falta GDAL")
+    from conftest import (escribir_hdfeos, estructura_grid, longitudes_h5,
+                          reflectancia_patron)
+    from hdfeos_extractor.core.cube import HyperspectralCube
+    from hdfeos_extractor.core.hdf5 import Hdf5Source
+
+    datos = reflectancia_patron()
+    alto, ancho = datos.shape[:2]
+    ruta = escribir_hdfeos(
+        tmp_path, datos, longitudes_h5(), geolocalizacion=False,
+        estructura=estructura_grid(nx=ancho, ny=alto, ulx=400000.0,
+                                   uly=4500000.0, pixel=30.0, zona=18))
+    esperado = (400000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0)
+    for preferir in (True, False):
+        cubo = HyperspectralCube(Hdf5Source(ruta, preferir_h5py=preferir))
+        try:
+            g = cubo.georreferencia
+            assert g.gt == pytest.approx(esperado), preferir
+            assert g.epsg == 32618, preferir
+        finally:
+            cubo.close()
