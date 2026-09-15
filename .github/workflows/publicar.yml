@@ -1,0 +1,57 @@
+# Publica el ZIP instalable como Release al empujar una etiqueta vX.Y.
+#
+# Es la respuesta al problema que se lleva a la gente por delante: el boton
+# "Download ZIP" de GitHub entrega el codigo fuente con una carpeta raiz que
+# QGIS no puede usar como nombre de modulo. Con un Release, el archivo que se
+# ofrece para descargar es el ZIP correcto y ya no hay que explicar nada.
+#
+#   git tag v2.0 && git push origin v2.0
+name: publicar
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write          # hace falta para crear el Release
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zip
+
+      - run: python -m pip install --quiet numpy pytest
+
+      - name: No se publica un ZIP mal formado
+        run: python -m pytest hdfeos_extractor/tests/test_paquete.py -q
+
+      - name: La etiqueta y metadata.txt tienen que coincidir
+        run: |
+          # Si no coinciden, el archivo publicado dice una version y el plugin
+          # instalado declara otra, y nadie sabe cual es cual.
+          META=$(sed -n 's/^version=//p' hdfeos_extractor/metadata.txt)
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "metadata.txt: $META   etiqueta: $TAG"
+          test "$META" = "$TAG"
+
+      - name: Armar el ZIP
+        run: ./empaquetar.sh
+
+      - name: Publicar el Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" hdfeos_extractor-*.zip \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Instalacion en QGIS: **Complementos -> Instalar a partir de ZIP**, eligiendo el \`hdfeos_extractor-*.zip\` de aca abajo.
+
+          No uses el boton verde \"Code -> Download ZIP\": ese entrega el codigo fuente con una carpeta raiz que QGIS no puede usar como nombre de modulo, y la carga falla con \`ModuleNotFoundError\`.
+
+          Los cambios de esta version estan en \`changelog\` dentro de [metadata.txt](https://github.com/csoto666/qgis-hdfeos-extractor/blob/$GITHUB_REF_NAME/hdfeos_extractor/metadata.txt)."

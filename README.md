@@ -1,5 +1,8 @@
 # HDF-EOS Explorer
 
+[![pruebas](https://github.com/csoto666/qgis-hdfeos-extractor/actions/workflows/pruebas.yml/badge.svg)](https://github.com/csoto666/qgis-hdfeos-extractor/actions/workflows/pruebas.yml)
+[![descargar](https://img.shields.io/github/v/release/csoto666/qgis-hdfeos-extractor?label=descargar%20ZIP)](https://github.com/csoto666/qgis-hdfeos-extractor/releases/latest)
+
 Plugin de QGIS para **abrir cubos hiperespectrales HDF-EOS5 y explorarlos**
 —enlazando en tiempo real dónde está un píxel, cómo se ve y cómo responde
 espectralmente— y para **extraerlos al formato nativo de ENVI** cuando hay que
@@ -198,19 +201,23 @@ es una nota pidiéndole al usuario que instale cosas.
 
 ## Instalación
 
-Desde el repositorio oficial: **Complementos → Administrar e instalar
+**Descargá el ZIP de la última versión desde
+[Releases](https://github.com/csoto666/qgis-hdfeos-extractor/releases/latest)**
+y en QGIS: **Complementos → Instalar a partir de ZIP**.
+
+Ese es el único archivo pensado para instalar. Lo arma el propio repositorio
+en cada versión y se revisa antes de publicarlo.
+
+Desde el repositorio oficial de QGIS: **Complementos → Administrar e instalar
 complementos**, buscar *HDF-EOS Explorer*.
 
-Desde el código fuente:
+Desde el código fuente, si preferís armarlo vos:
 
 ```sh
 ./empaquetar.sh
 ```
 
-y en QGIS: **Complementos → Instalar a partir de ZIP**, eligiendo el
-`hdfeos_extractor-<version>.zip` que deja ese script.
-
-### No uses el botón «Download ZIP» de GitHub
+### No uses el botón verde «Code → Download ZIP»
 
 Ese ZIP trae una carpeta raíz llamada `qgis-hdfeos-extractor-main`, y QGIS
 toma el nombre de la carpeta como nombre del complemento. Como el plugin vive
@@ -230,7 +237,9 @@ Si ya te pasó: borrá la carpeta `qgis-hdfeos-extractor-main` de
 %APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\                     (Windows)
 ```
 
-y volvé a instalar con el ZIP de `empaquetar.sh`. La otra opción, sin script,
+y volvé a instalar con el ZIP de
+[Releases](https://github.com/csoto666/qgis-hdfeos-extractor/releases/latest).
+La otra opción, sin descargar nada,
 es copiar a mano la carpeta `hdfeos_extractor/` del repositorio dentro de ese
 mismo directorio de plugins —tiene que quedar `.../plugins/hdfeos_extractor/`,
 con `__init__.py` y `metadata.txt` directamente adentro— y reiniciar QGIS.
@@ -287,8 +296,18 @@ sigue yendo al dato original, a resolución completa.
 python3 -m pytest
 ```
 
+Corren también en cada empujón a GitHub, en **Python 3.9 y 3.12**. El 3.9 está
+ahí a propósito: es el que traen las compilaciones de QGIS para macOS, y es
+donde aparecería cualquier uso de sintaxis o de numpy posterior a esa versión.
+
 Las del núcleo corren sin QGIS ni Qt. Las del gráfico, el cubo y el panel se
 saltan solas si no hay enlaces de Qt; las de HDF-EOS5, si no hay `h5py`.
+
+`tests/test_paquete.py` arma el ZIP con el script real y comprueba su forma:
+una sola carpeta raíz, con nombre que sea un identificador de Python válido, y
+`__init__.py` y `metadata.txt` directamente adentro. Existe porque esa forma se
+rompió una vez y el error apareció en la máquina del usuario, que es el peor
+lugar para enterarse.
 
 La prueba que sostiene el diseño está en `tests/test_hdf5.py`: extrae un cubo
 sintético a ENVI con el mismo código que usa el algoritmo y comprueba que
