@@ -18,23 +18,25 @@
 # junto con este programa (archivo LICENSE). Si no, vea
 # <https://www.gnu.org/licenses/>.
 #
-"""La ventana del cubo: la vista grande y las herramientas al costado.
+"""El bloque del cubo: la vista grande y las herramientas al costado.
 
-El cubo estaba dentro del panel acoplado, compitiendo por el alto con los
-controles, el grafico y la lista de firmas. En un panel al costado de QGIS eso
-deja una vista de doscientos pixeles para lo que es el centro del trabajo.
+Esto empezo dentro del panel acoplado, se mudo a una ventana propia porque
+ahi competia por el alto con todo lo demas, y ahora vuelve al panel pero como
+una mitad entera de un divisor, no como una franja. Las dos cosas que hacian
+falta eran tener el cubo y el espectro a la vista a la vez -son las dos caras
+del mismo dato- y que el cubo tuviera alto de verdad. Un divisor da las dos:
+el usuario reparte el espacio y el reparto queda donde el lo dejo.
 
-Aca el cubo se queda con la ventana entera menos una columna de herramientas,
-y la ventana se mueve, se agranda y se manda a otra pantalla como cualquier
-otra. El panel acoplado se queda con lo que si conviene tener siempre al lado
-del mapa: el espectro, las bandas malas y la biblioteca.
+El bloque sirve igual empotrado que suelto en una ventana aparte, porque es
+un widget corriente y quien lo usa decide donde ponerlo. El boton de soltar
+esta para cuando hay dos pantallas, que es cuando la ventana aparte gana.
 
 No importa QGIS -solo Qt-, asi que se puede probar sin abrirlo.
 """
 
 from .cube_view import (CubeView, MODO_AREA, MODO_MULTI, MODO_PAN, MODO_PIXEL,
                         MODO_X, MODO_Y, MODO_ZOOM)
-from .qt import QtWidgets, Qt, pyqtSignal
+from .qt import QtWidgets, Qt, enum, pyqtSignal
 
 #: Las siete herramientas, en el orden en que se ofrecen. Las dos primeras
 #: solo cambian que parte se mira; las cinco siguientes miden algo.
@@ -60,35 +62,40 @@ HERRAMIENTAS = (
      "variabilidad de la dispersion entre ellos."),
 )
 
+#: La columna de herramientas se conforma con menos cuando el panel esta
+#: acoplado al costado de QGIS. Era ancho fijo, y con el cubo empotrado ese
+#: ancho fijo se sumaba al minimo del bloque entero: el panel no bajaba de
+#: mil quinientos pixeles y no entraba en ningun costado.
 ANCHO_COLUMNA = 210
+ANCHO_COLUMNA_MIN = 148
 
 
-class VentanaCubo(QtWidgets.QWidget):
-    """Ventana independiente con la vista del cubo y sus herramientas.
+class PanelCubo(QtWidgets.QWidget):
+    """La vista del cubo y sus herramientas, empotrable o suelta.
 
     Crea los widgets y los deja expuestos; no los conecta. Las conexiones
-    viven en el panel, que es quien conoce al controlador: asi esta ventana
-    sigue sin saber nada de QGIS.
+    viven en el panel del explorador, que es quien conoce al controlador:
+    asi este bloque sigue sin saber nada de QGIS.
     """
 
     #: El usuario eligio otra herramienta.
     herramientaCambiada = pyqtSignal(str)
     #: Pidio mandar la vista actual al mapa de QGIS.
     envioPedido = pyqtSignal()
-    #: Se cerro la ventana.
+    #: Pidio soltar el cubo a una ventana aparte, o volver a empotrarlo.
+    soltarPedido = pyqtSignal(bool)
+    #: Se cerro la ventana suelta.
     cerrada = pyqtSignal()
 
     def __init__(self, parent=None):
-        super(VentanaCubo, self).__init__(parent)
+        super(PanelCubo, self).__init__(parent)
         self.setWindowTitle("Cubo hiperespectral")
-        self.setWindowFlags(Qt.Window)
-        self.resize(1000, 700)
 
         caja = QtWidgets.QHBoxLayout(self)
         caja.setContentsMargins(6, 6, 6, 6)
         caja.setSpacing(6)
         caja.addLayout(self._columna_vista(), 1)
-        caja.addWidget(self._columna_herramientas())
+        caja.addWidget(self._herramientas_con_barrido())
 
     # -- la vista y su barra ------------------------------------------------
     def _columna_vista(self):
@@ -96,43 +103,76 @@ class VentanaCubo(QtWidgets.QWidget):
         columna.setSpacing(4)
         columna.addLayout(self._barra())
         self.cubo = CubeView()
-        self.cubo.setMinimumSize(320, 240)
+        # Chico a proposito: es el minimo con el que el cubo sigue siendo
+        # legible, y de el depende cuanto puede angostarse el panel entero.
+        self.cubo.setMinimumSize(200, 160)
         columna.addWidget(self.cubo, 1)
         self.lectura = QtWidgets.QLabel(" ")
         columna.addWidget(self.lectura)
         return columna
 
     def _barra(self):
+        """Solo encuadre: acercar, alejar y los dos encuadres utiles.
+
+        Con botones pequenos y etiquetas cortas. Eran QPushButton con el
+        texto entero -"Ajustar a los datos", "Enviar vista a QGIS"- y entre
+        los seis pedian setecientos pixeles de ancho minimo, que es la mitad
+        de la razon por la que el panel no entraba acoplado al costado.
+        """
         fila = QtWidgets.QHBoxLayout()
         fila.setSpacing(3)
         self.boton_acercar = self._boton("+", "Acercar")
         self.boton_alejar = self._boton("-", "Alejar")
-        self.boton_todo = self._boton("Ver todo", "Ver la escena entera")
+        self.boton_todo = self._boton("Todo", "Ver la escena entera")
         self.boton_datos = self._boton(
-            "Ajustar a los datos",
+            "Datos",
             "Encuadra lo que tiene dato y deja fuera el relleno y los ceros")
         for b in (self.boton_acercar, self.boton_alejar, self.boton_todo,
                   self.boton_datos):
             fila.addWidget(b)
         fila.addStretch(1)
-        self.boton_enviar = self._boton(
-            "Enviar vista a QGIS",
-            "Agrega al mapa SOLO el RGB que se esta viendo, recortado a la\n"
-            "vista actual. No carga el cubo: son tres bandas de 8 bits.\n"
-            "Sirve para digitalizar encima o componer un mapa mientras se\n"
-            "sigue midiendo espectros en esta ventana.")
-        fila.addWidget(self.boton_enviar)
         return fila
 
     def _boton(self, texto, ayuda):
-        boton = QtWidgets.QPushButton(texto)
+        boton = QtWidgets.QToolButton()
+        boton.setText(texto)
         boton.setToolTip(ayuda)
         return boton
 
     # -- la columna del costado ---------------------------------------------
+    def _herramientas_con_barrido(self):
+        """La columna del costado: lo que se desplaza y lo que no.
+
+        Los grupos apilados piden medio millar de pixeles de alto, y ese
+        numero se convertia en el alto minimo de todo el panel: acoplado al
+        costado de QGIS, el explorador no cabia en una pantalla de portatil.
+        Un area de desplazamiento lo arregla, pero con todo dentro el boton
+        de enviar la vista al mapa quedaba bajo el pliegue, y es la accion
+        por la que se abre esta ventana. Asi que la salida va anclada abajo,
+        fuera del area: se desplaza lo que se ajusta de vez en cuando y se
+        queda fijo lo que se pulsa.
+        """
+        marco = QtWidgets.QWidget()
+        marco.setMaximumWidth(ANCHO_COLUMNA + 16)
+        marco.setMinimumWidth(ANCHO_COLUMNA_MIN + 16)
+        marco.setSizePolicy(QtWidgets.QSizePolicy.Maximum,
+                            QtWidgets.QSizePolicy.Preferred)
+        columna = QtWidgets.QVBoxLayout(marco)
+        columna.setContentsMargins(0, 0, 0, 0)
+        columna.setSpacing(6)
+
+        area = QtWidgets.QScrollArea()
+        area.setWidget(self._columna_herramientas())
+        area.setWidgetResizable(True)
+        area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        area.setHorizontalScrollBarPolicy(
+            enum(Qt, "ScrollBarPolicy", "ScrollBarAlwaysOff"))
+        columna.addWidget(area, 1)
+        columna.addWidget(self._grupo_salida())
+        return marco
+
     def _columna_herramientas(self):
         marco = QtWidgets.QWidget()
-        marco.setFixedWidth(ANCHO_COLUMNA)
         columna = QtWidgets.QVBoxLayout(marco)
         columna.setContentsMargins(0, 0, 0, 0)
         columna.setSpacing(6)
@@ -143,6 +183,32 @@ class VentanaCubo(QtWidgets.QWidget):
         self.banda_frontal.setWordWrap(True)
         columna.addWidget(self.banda_frontal)
         return marco
+
+    def _grupo_salida(self):
+        """Lo que saca el cubo de aca: al mapa, o a una ventana propia.
+
+        Van juntos y en la columna, no en la barra de encuadre: no cambian
+        lo que se ve, cambian donde va. Y en la barra su texto largo obligaba
+        a un ancho que el panel acoplado no tiene.
+        """
+        grupo = QtWidgets.QGroupBox("Salida")
+        columna = QtWidgets.QVBoxLayout(grupo)
+        columna.setSpacing(3)
+        self.boton_enviar = QtWidgets.QPushButton("Enviar vista a QGIS")
+        self.boton_enviar.setToolTip(
+            "Agrega al mapa SOLO el RGB que se esta viendo, recortado a la\n"
+            "vista actual y en su sitio. No carga el cubo: son tres bandas\n"
+            "de 8 bits. Sirve para digitalizar encima o componer un mapa\n"
+            "mientras se sigue midiendo espectros aca al lado.")
+        columna.addWidget(self.boton_enviar)
+        self.boton_soltar = QtWidgets.QPushButton("Soltar aparte")
+        self.boton_soltar.setCheckable(True)
+        self.boton_soltar.setToolTip(
+            "Saca el cubo a una ventana aparte, para mandarlo a otra\n"
+            "pantalla. Cerrar esa ventana lo devuelve aca.")
+        self.boton_soltar.toggled.connect(self.soltarPedido.emit)
+        columna.addWidget(self.boton_soltar)
+        return grupo
 
     def _grupo_herramientas(self):
         grupo = QtWidgets.QGroupBox("Herramienta")
@@ -250,9 +316,15 @@ class VentanaCubo(QtWidgets.QWidget):
         for w in (self.combo_preset, self.combo_realce, self.combo_paleta,
                   self.boton_rgb, self.boton_bandas_rgb, self.boton_acercar,
                   self.boton_alejar, self.boton_todo, self.boton_datos,
-                  self.boton_enviar):
+                  self.boton_enviar, self.boton_soltar):
             w.setEnabled(activo)
 
     def closeEvent(self, evento):
+        """Cerrar la ventana suelta devuelve el cubo al panel.
+
+        Es lo unico que no deja al usuario sin cubo y sin forma obvia de
+        recuperarlo. Quien la cierra quiere dejar de tener una ventana
+        suelta, no perder la vista.
+        """
         self.cerrada.emit()
-        super(VentanaCubo, self).closeEvent(evento)
+        super(PanelCubo, self).closeEvent(evento)

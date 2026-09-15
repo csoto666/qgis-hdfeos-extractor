@@ -79,7 +79,11 @@ MODO_PAN, MODO_ZOOM = "pan", "zoom"
 MODOS_NAVEGACION = (MODO_PAN, MODO_ZOOM)
 
 #: Ancho reservado a la derecha para la barra de color, en pixeles.
+#: Ancho de la franja de la barra de color: el degradado, sus numeros y el
+#: rotulo girado. Es un minimo y no un ancho fijo -ver ``_ancho_barra``-:
+#: con cuentas crudas los numeros no entran en sesenta pixeles.
 ANCHO_BARRA = 62
+ANCHO_BARRA_MAX = 96
 
 COLOR_CRUZ = QtGui.QColor(255, 60, 40)
 COLOR_ARISTA = QtGui.QColor(225, 225, 235)
@@ -106,10 +110,17 @@ def a_qimage(arreglo):
 
 def _corto(valor):
     """Un numero corto para la barra: reflectancia con tres decimales,
-    cuentas con notacion cientifica."""
+    cuentas con notacion cientifica.
+
+    El exponente va sin signo ni ceros de relleno -``1.8e4`` y no
+    ``1.8e+04``-. No es cosmetica: la franja de la barra es angosta y con la
+    forma larga el ultimo digito se cortaba, dejando ``1.8e``, que no es un
+    numero.
+    """
     v = float(valor)
     if abs(v) >= 1000 or (v != 0 and abs(v) < 0.001):
-        return "%.1e" % v
+        mantisa, exponente = ("%.1e" % v).split("e")
+        return "%se%d" % (mantisa, int(exponente))
     if abs(v) >= 10:
         return "%.0f" % v
     return ("%.3f" % v).rstrip("0").rstrip(".")
@@ -467,7 +478,7 @@ class CubeView(QtWidgets.QWidget):
         if not self._utilizable():
             return None
         margen = 10.0
-        reservado = ANCHO_BARRA if self._rango else 0.0
+        reservado = self._ancho_barra() if self._rango else 0.0
         disponible_w = max(1.0, self.width() - 2 * margen - reservado)
         disponible_h = max(1.0, self.height() - 2 * margen)
         cols = float(self.ancho_visible())
@@ -541,6 +552,28 @@ class CubeView(QtWidgets.QWidget):
         self._pintar_barra_color(p)
         p.end()
 
+    def _ancho_barra(self):
+        """Cuanto reserva la barra de color, segun lo que midan sus numeros.
+
+        Era una constante. Con reflectancia -0 a 1- sesenta pixeles sobran,
+        pero un cubo en cuentas crudas rotula ``1.8e4`` y ahi no entra: el
+        texto se cortaba y la barra quedaba mintiendo. Se mide con la misma
+        fuente con que se va a dibujar y se reserva lo que haga falta.
+        """
+        if not self._rango:
+            return 0.0
+        lo, hi = self._rango
+        fuente = QtGui.QFont(self.font())
+        fuente.setPointSizeF(max(7.0, fuente.pointSizeF() - 1.5))
+        metrica = QtGui.QFontMetricsF(fuente)
+        # horizontalAdvance es lo que hay en Qt6; width se quito ahi y es lo
+        # unico que existe en los Qt5 mas viejos que QGIS todavia arrastra.
+        medir = getattr(metrica, "horizontalAdvance", None) or metrica.width
+        ancho_texto = max(medir(_corto(v))
+                          for v in (lo, hi, (lo + hi) / 2.0))
+        # 8 de sangria + 14 del degradado + 5 de separacion + el numero + 4.
+        return min(ANCHO_BARRA_MAX, max(ANCHO_BARRA, 31.0 + ancho_texto))
+
     def _pintar_barra_color(self, p):
         """La escala del cubo, en las unidades del dato.
 
@@ -553,7 +586,7 @@ class CubeView(QtWidgets.QWidget):
         lo, hi = self._rango
         alto = max(40.0, self.height() - 60.0)
         arriba = (self.height() - alto) / 2.0
-        izquierda = self.width() - ANCHO_BARRA + 8.0
+        izquierda = self.width() - self._ancho_barra() + 8.0
         ancho = 14.0
 
         # El degradado se arma con la misma tabla que pinta las caras.

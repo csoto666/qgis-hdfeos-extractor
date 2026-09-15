@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pruebas de la ventana propia del cubo."""
+"""Pruebas del bloque del cubo: la vista grande y sus herramientas."""
 
 import pytest
 
@@ -7,7 +7,7 @@ pytest.importorskip("PyQt5", reason="hacen falta enlaces de Qt")
 
 from hdfeos_extractor.vista.cube_view import (MODO_AREA, MODO_PAN, MODO_PIXEL,
                                               MODO_X, MODO_ZOOM)
-from hdfeos_extractor.vista.ventana_cubo import HERRAMIENTAS, VentanaCubo
+from hdfeos_extractor.vista.panel_cubo import HERRAMIENTAS, PanelCubo
 
 
 @pytest.fixture(scope="module")
@@ -20,17 +20,37 @@ def app():
 
 @pytest.fixture
 def ventana(app):
-    v = VentanaCubo()
+    v = PanelCubo()
     yield v
     v.close()
 
 
-def test_es_una_ventana_propia_y_redimensionable(ventana):
-    """El cubo competia por el alto dentro del panel acoplado. Aca se agranda,
-    se mueve y se va a otra pantalla como cualquier ventana."""
-    from PyQt5.QtCore import Qt
-    assert ventana.windowFlags() & Qt.Window
-    assert ventana.cubo.minimumWidth() >= 320
+def test_se_deja_empotrar(app, ventana):
+    """Es un widget corriente: quien lo usa decide si va dentro o suelto.
+
+    Con la bandera de ventana forzada en el constructor -que es como estaba
+    cuando el cubo tenia ventana propia-, meterlo en un divisor lo dejaba
+    como una ventana flotante vacia encima del panel. Qt le pone la bandera
+    a cualquier widget sin padre, asi que lo que hay que comprobar es que se
+    la quita al darle uno.
+    """
+    from PyQt5 import QtWidgets
+    divisor = QtWidgets.QSplitter()
+    divisor.addWidget(ventana)
+    assert not ventana.isWindow()
+    assert divisor.indexOf(ventana) == 0
+    assert ventana.cubo.minimumWidth() >= 200
+    # El divisor es local y se lleva al hijo consigo al morir; devolverlo
+    # deja el objeto vivo para que la fixture pueda cerrarlo.
+    ventana.setParent(None)
+
+
+def test_el_boton_de_soltar_avisa_en_los_dos_sentidos(ventana):
+    recibido = []
+    ventana.soltarPedido.connect(recibido.append)
+    ventana.boton_soltar.setChecked(True)
+    ventana.boton_soltar.setChecked(False)
+    assert recibido == [True, False]
 
 
 def test_estan_las_siete_herramientas(ventana):

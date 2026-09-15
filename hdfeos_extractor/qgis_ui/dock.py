@@ -41,7 +41,7 @@ from ..core.bandas import formatear_rangos, parsear_rangos
 from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
 from ..vista.cube_view import MODOS_NAVEGACION
-from ..vista.ventana_cubo import VentanaCubo
+from ..vista.panel_cubo import PanelCubo
 from ..vista.qt import QtGui, QtWidgets, Qt
 from ..vista.spectral_plot import SpectralPlot
 from . import map_tools
@@ -120,6 +120,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.controller = SpatialSpectralController(self)
         self.herramienta = None
         self._bloqueado = False        # corta los bucles de senales
+        self.divisor = None            # existe recien en _construir
+        self._cubo_suelto = False
 
         self.setObjectName("HyperspectralExplorerDock")
         self.setWidget(self._construir())
@@ -129,35 +131,149 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
     # -- construccion -------------------------------------------------------
     def _construir(self):
+        """El cubo y el espectro en la misma herramienta, repartidos a mano.
+
+        Son las dos caras del mismo dato -donde esta el pixel y que mide- y
+        mirarlas a la vez es todo el trabajo. Estuvieron apiladas en una
+        columna, y ahi el cubo se quedaba con doscientos pixeles de alto;
+        despues en dos ventanas, y ahi habia que ir y volver. Un divisor
+        resuelve las dos cosas: cada mitad tiene alto de verdad, el usuario
+        reparte el espacio y el reparto se queda donde el lo dejo.
+        """
+        self.panel_cubo = PanelCubo()
+        self._adoptar_widgets_del_cubo()
+
+        # En el divisor van las dos vistas y nada mas. Metiendo ademas la
+        # fila de la escena, la biblioteca y el estado, la mitad de abajo
+        # sumaba minimos hasta desbordar y los bloques se pisaban. Lo que no
+        # necesita area queda fuera, arriba y abajo, donde ocupa su alto y
+        # se acaba la discusion.
+        self.divisor = QtWidgets.QSplitter(Qt.Horizontal)
+        self.divisor.setChildrenCollapsible(False)
+        self.divisor.addWidget(self.panel_cubo)
+        self.divisor.addWidget(self._bloque_grafico())
+        self.divisor.setStretchFactor(0, 3)
+        self.divisor.setStretchFactor(1, 2)
+        self._orientar_divisor()
+
         contenedor = QtWidgets.QWidget()
         caja = QtWidgets.QVBoxLayout(contenedor)
         caja.setContentsMargins(6, 6, 6, 6)
         caja.setSpacing(6)
-        # El cubo vive en su propia ventana: aca competia por el alto con
-        # los controles, el grafico y la lista, y en un panel acoplado al
-        # costado eso le dejaba doscientos pixeles a lo que es el centro del
-        # trabajo. El panel se queda con lo que conviene tener siempre junto
-        # al mapa.
-        self.ventana_cubo = VentanaCubo()
-        self._adoptar_widgets_de_la_ventana()
-
         caja.addWidget(self._bloque_escena())
-        caja.addWidget(self._bloque_grafico(), 1)
+        caja.addWidget(self.divisor, 1)
         caja.addWidget(self._bloque_firmas())
-
         self.estado = QtWidgets.QLabel("Elija una capa raster hiperespectral")
         self.estado.setWordWrap(True)
         caja.addWidget(self.estado)
         return contenedor
 
-    def _adoptar_widgets_de_la_ventana(self):
-        """Toma prestados los widgets que se mudaron a la ventana del cubo.
+    def _orientar_divisor(self):
+        """Reparte a lo ancho o a lo alto segun donde este el panel.
 
-        La ventana los crea y los muestra; el panel los conecta, porque es
-        quien conoce al controlador. Asi la ventana sigue sin saber nada de
+        Un dock de QGIS vive igual pegado al costado -alto y angosto- que
+        abajo o flotando -ancho y bajo-. Con una orientacion fija, la mitad
+        de esas posiciones deja las dos vistas en una franja inservible.
+
+        Se mira primero el area de acople y solo despues la forma, y ese
+        orden importa: el ancho minimo de un divisor acostado es la suma de
+        sus mitades, asi que decidir por el ancho actual se muerde la cola
+        -el panel no puede angostarse hasta que se apile, y no se apila
+        hasta que se angoste-. El area no depende del tamano y corta el
+        nudo.
+        """
+        if self.divisor is None:
+            return
+        quiere = (Qt.Horizontal if self._conviene_a_lo_ancho()
+                  else Qt.Vertical)
+        if self.divisor.orientation() != quiere:
+            self.divisor.setOrientation(quiere)
+            self._repartir_divisor()
+
+    def _repartir_divisor(self):
+        """Reparte de nuevo al cambiar de orientacion, y solo entonces.
+
+        Al voltearlo, Qt conserva los tamanos del reparto anterior y quedan
+        sin sentido: apilado, el cubo se quedaba con casi todo el alto y al
+        espectro le tocaba una franja de setenta pixeles. Se reparte una vez
+        -algo mas para el cubo, que es el que necesita area- y a partir de
+        ahi manda el usuario: dentro de una misma orientacion no se le toca
+        el divisor.
+        """
+        largo = (self.divisor.width()
+                 if self.divisor.orientation() == Qt.Horizontal
+                 else self.divisor.height())
+        if largo > 0:
+            cubo = int(largo * 0.56)
+            self.divisor.setSizes([cubo, largo - cubo])
+
+    def _conviene_a_lo_ancho(self):
+        area = self._area_de_acople()
+        if area in (Qt.LeftDockWidgetArea, Qt.RightDockWidgetArea):
+            # Columna: el cubo arriba y el espectro abajo.
+            return False
+        if area in (Qt.TopDockWidgetArea, Qt.BottomDockWidgetArea):
+            return True                # franja ancha: uno al lado del otro
+        return self.width() >= self.height() * 1.2      # flotante
+
+    def _area_de_acople(self):
+        """Donde esta acoplado, o None si flota o todavia no se sabe."""
+        if self.isFloating():
+            return None
+        try:
+            ventana = self.iface.mainWindow()
+            return ventana.dockWidgetArea(self) if ventana else None
+        except (AttributeError, RuntimeError):
+            return None
+
+    def resizeEvent(self, evento):
+        super(HyperspectralDock, self).resizeEvent(evento)
+        self._orientar_divisor()
+
+    # -- soltar y empotrar el cubo ------------------------------------------
+    def _soltar_cubo(self, suelto):
+        """Saca el cubo a una ventana aparte, o lo devuelve al divisor.
+
+        Empotrado es lo normal; suelto gana cuando hay dos pantallas. Pasar
+        de uno a otro es cambiar el padre y la bandera de ventana, y la
+        vista no se reconstruye: el cubo abierto, el zoom y la herramienta
+        elegida siguen donde estaban.
+        """
+        if suelto == self._cubo_suelto:
+            return
+        self._cubo_suelto = suelto
+        if suelto:
+            self.panel_cubo.setParent(None)
+            self.panel_cubo.setWindowFlags(Qt.Window)
+            self.panel_cubo.resize(1000, 700)
+            self.panel_cubo.show()
+            self.panel_cubo.raise_()
+            self.panel_cubo.activateWindow()
+        else:
+            self.panel_cubo.setWindowFlags(Qt.Widget)
+            self.divisor.insertWidget(0, self.panel_cubo)
+            self.divisor.setStretchFactor(0, 3)
+            self.panel_cubo.show()
+        self.panel_cubo.boton_soltar.setText(
+            "Empotrar aqui" if suelto else "Soltar aparte")
+
+    def _cubo_cerrado(self):
+        """La ventana suelta se cerro: el cubo vuelve al panel.
+
+        Nunca se pierde la vista por cerrar una ventana. El boton se
+        desmarca solo, y desmarcarlo es lo que empotra de vuelta.
+        """
+        if self._cubo_suelto:
+            self.panel_cubo.boton_soltar.setChecked(False)
+
+    def _adoptar_widgets_del_cubo(self):
+        """Toma prestados los widgets que viven en el bloque del cubo.
+
+        El bloque los crea y los muestra; el panel los conecta, porque es
+        quien conoce al controlador. Asi el bloque sigue sin saber nada de
         QGIS y las conexiones siguen viviendo en un solo lugar.
         """
-        v = self.ventana_cubo
+        v = self.panel_cubo
         self.cubo = v.cubo
         self.modos = v.herramientas
         self.combo_preset = v.combo_preset
@@ -171,6 +287,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.boton_datos = v.boton_datos
         self.boton_todo = v.boton_todo
         self.banda_frontal = v.banda_frontal
+        # La lectura del cursor va junto al cubo, que es donde esta el
+        # cursor. Estaba duplicada: el bloque espectral creaba otra etiqueta
+        # con el mismo nombre y se quedaba con el texto, asi que la de aca
+        # no se escribia nunca.
         self.lectura = v.lectura
         for modo in MODOS:
             self.combo_realce.addItem(ETIQUETAS_REALCE.get(modo, modo), modo)
@@ -199,7 +319,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.boton_abrir.setToolTip(
             "Abre un cubo desde el disco: HDF-EOS5 directamente, o un ENVI "
             "ya extraido")
-        self.boton_extraer = QtWidgets.QPushButton("Extraer a ENVI...")
+        self.boton_extraer = QtWidgets.QPushButton("Extraer...")
         self.boton_extraer.setToolTip(
             "Escribe la escena HDF-EOS5 abierta en formato nativo de ENVI, "
             "para llevarla a otro programa")
@@ -208,10 +328,6 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         rejilla.addWidget(self.combo_capa, 1)
         rejilla.addWidget(self.boton_abrir)
         rejilla.addWidget(self.boton_extraer)
-        self.boton_ventana = QtWidgets.QPushButton("Cubo...")
-        self.boton_ventana.setToolTip(
-            "Abre la ventana del cubo hiperespectral")
-        rejilla.addWidget(self.boton_ventana)
         return rejilla
 
     def _bloque_grafico(self):
@@ -219,6 +335,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         caja = QtWidgets.QVBoxLayout(grupo)
         caja.setContentsMargins(3, 3, 3, 3)
         self.grafico = SpectralPlot()
+        # Un piso para el grafico: apilado bajo el cubo se quedaba en una
+        # franja donde no se distingue una firma de otra, que es justo lo
+        # que hay que mirar.
+        self.grafico.setMinimumHeight(130)
         caja.addWidget(self.grafico, 1)
         # Fila siempre visible: la lectura del cursor, la cuenta de bandas
         # descartadas -que hay que ver aunque no se este configurando nada- y
@@ -231,11 +351,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             "Elegir que bandas quedan fuera del analisis")
         fila.addWidget(self.boton_bandas)
         self.cuenta_bandas = QtWidgets.QLabel("-")
-        fila.addWidget(self.cuenta_bandas)
-        fila.addStretch(1)
-        self.lectura = QtWidgets.QLabel(" ")
-        self.lectura.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        fila.addWidget(self.lectura)
+        # Con ajuste de linea: el texto enumera los tramos descartados y sin
+        # esto su largo se convertia en el ancho minimo del panel entero.
+        self.cuenta_bandas.setWordWrap(True)
+        fila.addWidget(self.cuenta_bandas, 1)
         caja.addLayout(fila)
 
         # Los controles van escondidos por defecto. Son un ajuste por escena,
@@ -285,6 +404,14 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         columna.addLayout(fila2)
         return columna
 
+    def _boton_chico(self, texto, ayuda):
+        boton = QtWidgets.QToolButton()
+        boton.setText(texto)
+        boton.setToolTip(ayuda)
+        boton.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                            QtWidgets.QSizePolicy.Preferred)
+        return boton
+
     def _bloque_firmas(self):
         grupo = QtWidgets.QGroupBox("Firmas guardadas")
         # Preferred/Maximum y no el Expanding que traen los grupos: sin esto
@@ -304,11 +431,17 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             "La casilla muestra u oculta la curva en el grafico")
         caja.addWidget(self.lista)
 
+        # QToolButton y no QPushButton: los cuatro en fila con el ancho
+        # minimo de un boton normal pedian casi cuatrocientos pixeles, y ese
+        # numero terminaba siendo el ancho minimo del panel acoplado.
         fila = QtWidgets.QHBoxLayout()
-        self.boton_guardar = QtWidgets.QPushButton("Guardar")
-        self.boton_guardar.setToolTip("Guarda la firma que se esta viendo")
-        self.boton_renombrar = QtWidgets.QPushButton("Renombrar")
-        self.boton_quitar = QtWidgets.QPushButton("Quitar")
+        fila.setSpacing(3)
+        self.boton_guardar = self._boton_chico(
+            "Guardar", "Guarda la firma que se esta viendo")
+        self.boton_renombrar = self._boton_chico(
+            "Renombrar", "Cambia el nombre de la firma elegida")
+        self.boton_quitar = self._boton_chico(
+            "Quitar", "Saca de la biblioteca la firma elegida")
         for b in (self.boton_guardar, self.boton_renombrar, self.boton_quitar):
             fila.addWidget(b)
         caja.addLayout(fila)
@@ -334,14 +467,20 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.combo_capa.currentIndexChanged.connect(self._capa_elegida)
         self.boton_abrir.clicked.connect(self._abrir_archivo)
         self.boton_extraer.clicked.connect(self._extraer_a_envi)
-        self.ventana_cubo.herramientaCambiada.connect(self._cambiar_modo)
-        self.ventana_cubo.envioPedido.connect(self._enviar_a_qgis)
-        self.ventana_cubo.boton_enviar.clicked.connect(self._enviar_a_qgis)
-        self.ventana_cubo.boton_acercar.clicked.connect(
+        self.panel_cubo.herramientaCambiada.connect(self._cambiar_modo)
+        self.panel_cubo.envioPedido.connect(self._enviar_a_qgis)
+        self.panel_cubo.boton_enviar.clicked.connect(self._enviar_a_qgis)
+        self.panel_cubo.soltarPedido.connect(self._soltar_cubo)
+        # Mover el panel de costado a abajo cambia que reparto conviene, y
+        # no pasa por resizeEvent con la forma final: hay que escucharlo.
+        self.dockLocationChanged.connect(lambda _area:
+                                         self._orientar_divisor())
+        self.topLevelChanged.connect(lambda _flota: self._orientar_divisor())
+        self.panel_cubo.cerrada.connect(self._cubo_cerrado)
+        self.panel_cubo.boton_acercar.clicked.connect(
             lambda: self.cubo.acercar(0.7))
-        self.ventana_cubo.boton_alejar.clicked.connect(
+        self.panel_cubo.boton_alejar.clicked.connect(
             lambda: self.cubo.acercar(1.0 / 0.7))
-        self.boton_ventana.clicked.connect(self._mostrar_ventana_cubo)
 
         self.combo_preset.activated.connect(self._preset_elegido)
         self.combo_realce.activated.connect(self._realce_elegido)
@@ -492,7 +631,6 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.cubo.set_cube(cubo, self.controller.composer)
         self.cubo.unidad = ("reflectancia" if cubo.scale or cubo.aplicar_escala
                             else "valor")
-        self._mostrar_ventana_cubo()
         self._volver_al_rgb()
         self._preparar_controles(cubo)
         self._habilitar(True)
@@ -550,14 +688,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         for deslizador, numero, _ in self.controles_banda.values():
             deslizador.setEnabled(activo)
             numero.setEnabled(activo)
-        self.ventana_cubo.habilitar(activo)
+        self.panel_cubo.habilitar(activo)
 
     # -- herramienta de mapa ------------------------------------------------
-    def _mostrar_ventana_cubo(self):
-        self.ventana_cubo.show()
-        self.ventana_cubo.raise_()
-        self.ventana_cubo.activateWindow()
-
     def _enviar_a_qgis(self):
         """Manda al mapa solo el RGB visible, no el cubo.
 
@@ -600,10 +733,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.herramienta.set_modo(self._modo_actual())
 
     def _modo_actual(self):
-        return self.ventana_cubo.herramienta()
+        return self.panel_cubo.herramienta()
 
     def _cambiar_modo(self, clave):
-        self.ventana_cubo.set_herramienta(clave)
+        self.panel_cubo.set_herramienta(clave)
         self.cubo.set_modo(clave)
         if self.herramienta is None:
             return
@@ -885,7 +1018,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
     # -- cierre -------------------------------------------------------------
     def closeEvent(self, evento):
-        self.ventana_cubo.close()
+        if self._cubo_suelto:
+            # Suelta, la ventana del cubo es hija de nadie: cerrar el panel
+            # la dejaria flotando sin dueno y sin forma de recuperarla.
+            self.panel_cubo.close()
         self._desconectar_proyecto()
         self.controller.close_cube()
         if self.herramienta is not None:

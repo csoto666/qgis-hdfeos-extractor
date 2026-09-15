@@ -166,9 +166,18 @@ Se ven en el cubo, y cada uno mueve algo distinto:
 | **Área** | Un rectángulo | Firma media del área, con su desviación como envolvente |
 | **Píxeles** | Un punto por clic | Firma media del conjunto, para muestrear variabilidad |
 
-Funcionan tanto sobre el lienzo de QGIS como **dentro de la ventana del cubo**.
+Funcionan tanto sobre el lienzo de QGIS como **dentro de la vista del cubo**.
 Eso último importa: con un HDF-EOS5 abierto directamente no hay capa en el
 mapa, así que sobre el lienzo no habría dónde actuar.
+
+## Una sola herramienta: el cubo y el espectro
+
+Son las dos caras del mismo dato —dónde está el píxel y qué mide—, así que
+van en el mismo panel, separados por un divisor que se arrastra. El reparto
+se **acuesta o se apila** según dónde esté acoplado el panel: al costado de
+QGIS, el cubo arriba y el espectro abajo; abajo o flotando, uno al lado del
+otro. Con dos pantallas, **Soltar aparte** manda el cubo a su propia ventana;
+cerrarla lo devuelve al panel.
 
 ## El zoom recalcula el realce
 
@@ -179,6 +188,36 @@ ceros estiran el rango y el terreno queda aplastado en una banda de grises.
 
 Al acercarse se recalculan **el realce y la escala de color sobre lo visible**,
 y la barra de color a la derecha del cubo dice en qué valores está.
+
+## La proyección: de dónde salen las coordenadas
+
+Es el error más caro de los datos geoespaciales porque no se ve: una capa mal
+proyectada se dibuja igual de bien, sólo que en el lugar equivocado. El plugin
+lee la georreferencia **del propio archivo** y distingue tres casos, porque
+tratarlos igual es justamente el error:
+
+| Caso | De dónde sale | Qué se hace |
+|---|---|---|
+| **Afín** | `map info` de ENVI, o la geotransformación que traiga GDAL | Se escribe tal cual, con sus términos de rotación. No se toca ningún píxel |
+| **Geometría de sensor** | Las capas de latitud y longitud del HDF-EOS5 | Se reproyecta de verdad, por placa delgada, hacia una rejilla al norte |
+| **Sin georreferencia** | — | Se dice. No se inventa un SRC |
+
+El segundo caso es el de los productos sin ortorectificar, y no es un detalle:
+ahí la relación entre píxel y terreno cambia a lo ancho de la franja, y
+**ninguna geotransformación afín la describe**. Escribirla como si la tuviera
+deja la escena en coordenadas de píxel, es decir en el golfo de Guinea.
+
+El tercero es deliberado. Una capa sin SRC se ve mal puesta y el usuario lo
+entiende; una capa con un SRC inventado se ve bien puesta y está mal, que es
+peor. El panel dice en su barra de estado de dónde salieron las coordenadas.
+
+## Enviar la vista a QGIS
+
+**Enviar vista a QGIS** agrega al mapa sólo el RGB que se está viendo,
+recortado a la vista actual y con el realce puesto. No carga el cubo: son tres
+bandas de 8 bits más una de transparencia, así que el relleno no tapa el mapa
+de fondo. Sirve para digitalizar encima o componer un mapa mientras se sigue
+midiendo espectros en el cubo, al lado.
 
 ## La composición RGB se elige por longitud de onda
 

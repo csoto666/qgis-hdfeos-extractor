@@ -540,11 +540,46 @@ def test_enviar_sin_gdal_avisa_en_vez_de_romper(panel, monkeypatch):
     assert "No se pudo escribir la vista" in panel.estado.text()
 
 
-def test_abrir_una_escena_muestra_la_ventana_del_cubo(panel):
-    assert panel.ventana_cubo.cubo.cube is panel.controller.cube
+def test_el_cubo_y_el_espectro_estan_en_la_misma_herramienta(panel):
+    """Son las dos caras del mismo dato: mirarlas a la vez es el trabajo."""
+    assert panel.panel_cubo.cubo.cube is panel.controller.cube
+    assert panel.divisor.indexOf(panel.panel_cubo) == 0
+    assert panel.divisor.count() == 2
 
 
-def test_el_boton_abre_la_ventana(panel):
-    panel._mostrar_ventana_cubo()
-    assert not panel.ventana_cubo.isHidden()
-    panel.ventana_cubo.close()
+def test_el_divisor_se_orienta_segun_la_forma_del_panel(panel):
+    """Un dock de QGIS vive igual al costado que abajo.
+
+    Con orientacion fija, la mitad de las posiciones deja las dos vistas en
+    una franja inservible.
+    """
+    from PyQt5.QtCore import Qt
+    panel.resize(1200, 500)
+    panel._orientar_divisor()
+    assert panel.divisor.orientation() == Qt.Horizontal
+    panel.resize(400, 1000)
+    panel._orientar_divisor()
+    assert panel.divisor.orientation() == Qt.Vertical
+
+
+def test_soltar_el_cubo_y_volver_a_empotrarlo(panel):
+    """Cambiar de sitio no reconstruye la vista: el cubo abierto sigue ahi."""
+    from PyQt5.QtCore import Qt
+    cubo_abierto = panel.panel_cubo.cubo.cube
+    panel.panel_cubo.boton_soltar.setChecked(True)
+    assert panel.panel_cubo.windowFlags() & Qt.Window
+    assert panel.divisor.indexOf(panel.panel_cubo) == -1
+    assert panel.panel_cubo.cubo.cube is cubo_abierto
+
+    panel.panel_cubo.boton_soltar.setChecked(False)
+    assert not (panel.panel_cubo.windowFlags() & Qt.Window)
+    assert panel.divisor.indexOf(panel.panel_cubo) == 0
+    assert panel.panel_cubo.cubo.cube is cubo_abierto
+
+
+def test_cerrar_la_ventana_suelta_devuelve_el_cubo_al_panel(panel):
+    """Nunca se pierde la vista por cerrar una ventana."""
+    panel.panel_cubo.boton_soltar.setChecked(True)
+    panel.panel_cubo.close()
+    assert not panel.panel_cubo.boton_soltar.isChecked()
+    assert panel.divisor.indexOf(panel.panel_cubo) == 0
