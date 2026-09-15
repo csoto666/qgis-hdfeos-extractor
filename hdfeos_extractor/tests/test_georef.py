@@ -659,3 +659,86 @@ def test_el_aviso_dice_que_se_busco_y_que_habia(tmp_path):
         assert "vectores 1D" in nota          # las longitudes de onda estan
     finally:
         cubo.close()
+
+
+# -- el driver de GDAL como ultimo recurso ---------------------------------
+def geotiff(ruta, gt=None, wkt=None, gcps=None):
+    """Un GeoTIFF minimo, con o sin georreferencia."""
+    from osgeo import gdal
+    ds = gdal.GetDriverByName("GTiff").Create(str(ruta), 10, 8, 1,
+                                              gdal.GDT_Byte)
+    if gt is not None:
+        ds.SetGeoTransform(gt)
+    if wkt:
+        ds.SetProjection(wkt)
+    if gcps:
+        ds.SetGCPs([gdal.GCP(x, y, 0.0, c, f) for c, f, x, y in gcps],
+                   wkt or "")
+    ds = None
+    return str(ruta)
+
+
+def wkt_utm18():
+    from osgeo import osr
+    src = osr.SpatialReference()
+    src.ImportFromEPSG(32618)
+    return src.ExportToWkt()
+
+
+def test_de_gdal_lee_la_geotransformacion(tmp_path):
+    pytest.importorskip("osgeo.gdal", reason="hace falta GDAL")
+    from osgeo import gdal
+
+    ruta = geotiff(tmp_path / "con.tif",
+                   gt=(400000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0),
+                   wkt=wkt_utm18())
+    g = Georreferencia.de_gdal(gdal.Open(ruta))
+    assert g.es_afin and g.origen == "archivo"
+    assert g.gt == pytest.approx((400000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0))
+    assert "18N" in g.wkt
+
+
+def test_de_gdal_no_confunde_la_identidad_con_una_georreferencia(tmp_path):
+    """GDAL devuelve la identidad cuando no hay geotransformacion.
+
+    Y la identidad es indistinguible de una georreferencia real en pixeles.
+    Confundirlas es como termina una escena en el golfo de Guinea, que es
+    justo el sintoma que hay que no volver a producir.
+    """
+    pytest.importorskip("osgeo.gdal", reason="hace falta GDAL")
+    from osgeo import gdal
+
+    g = Georreferencia.de_gdal(gdal.Open(geotiff(tmp_path / "sin.tif")))
+    assert not g.tiene_mapa
+    assert Georreferencia.de_gdal(None).tiene_mapa is False
+
+
+def test_de_gdal_lee_puntos_de_control(tmp_path):
+    pytest.importorskip("osgeo.gdal", reason="hace falta GDAL")
+    from osgeo import gdal
+
+    ruta = geotiff(tmp_path / "gcp.tif", wkt=wkt_utm18(),
+                   gcps=[(0.0, 0.0, 400000.0, 4500000.0),
+                         (10.0, 0.0, 400300.0, 4500000.0),
+                         (0.0, 8.0, 400000.0, 4499760.0)])
+    g = Georreferencia.de_gdal(gdal.Open(ruta))
+    assert g.es_gcp and g.necesita_remuestreo and len(g.gcps) == 3
+
+
+def test_el_hdf5_sin_georreferencia_no_la_saca_de_gdal(tmp_path):
+    """El ultimo recurso no puede inventar lo que no hay.
+
+    Preguntarle a GDAL es razonable -lleva anos leyendo dialectos de HDF5-
+    pero si tampoco el sabe, la respuesta sigue siendo "no se sabe".
+    """
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    from conftest import (escribir_hdfeos, longitudes_h5, reflectancia_patron)
+    from hdfeos_extractor.core.cube import HyperspectralCube
+
+    ruta = escribir_hdfeos(tmp_path, reflectancia_patron(), longitudes_h5(),
+                           geolocalizacion=False)
+    cubo = HyperspectralCube.load(ruta)
+    try:
+        assert not cubo.georreferencia.tiene_mapa
+    finally:
+        cubo.close()

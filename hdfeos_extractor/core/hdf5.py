@@ -131,6 +131,10 @@ class Hdf5Source(object):
         if proyectada is not None and proyectada.tiene_mapa:
             return proyectada
 
+        de_gdal = self._georreferencia_de_gdal()
+        if de_gdal is not None and de_gdal.tiene_mapa:
+            return de_gdal
+
         try:
             ruta_lon, ruta_lat = self.escena.hallar_geolocalizacion()
             if not (ruta_lon and ruta_lat):
@@ -173,6 +177,40 @@ class Hdf5Source(object):
                             "dice en que sistema: hay que asignarle el SRC "
                             "a mano")
         return georref
+
+    def _georreferencia_de_gdal(self):
+        """Ultimo recurso: preguntarle al driver de GDAL.
+
+        GDAL lleva anos leyendo dialectos de HDF5 georreferenciado, y a veces
+        reconoce uno que este modulo no. No se pone primero porque abre el
+        archivo por segunda vez y porque cuando los caminos anteriores dan
+        algo, ese algo viene del producto y no de la interpretacion de un
+        driver. Pero antes de rendirse, vale la pena preguntar.
+        """
+        from .georef import Georreferencia
+        try:
+            from osgeo import gdal
+        except ImportError:                # pragma: no cover - QGIS trae GDAL
+            return None
+        if self.escena is None:
+            return None
+        candidatas = ['HDF5:"%s"://%s' % (self.ruta, self.escena.ruta_cubo),
+                      self.ruta]
+        for uri in candidatas:
+            ds = None
+            try:
+                ds = gdal.Open(uri)
+                if ds is None:
+                    continue
+                georref = Georreferencia.de_gdal(ds)
+            except Exception:              # pragma: no cover - driver raro
+                continue
+            finally:
+                ds = None
+            if georref.tiene_mapa:
+                georref.origen = "driver de GDAL"
+                return georref
+        return None
 
     def _ejes_de_coordenadas(self, lineas, muestras):
         """Los vectores x/y del producto, si su largo cuadra con la escena.
