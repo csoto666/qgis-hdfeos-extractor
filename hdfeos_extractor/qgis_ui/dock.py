@@ -35,6 +35,7 @@ from qgis.core import QgsProject, QgsRasterLayer
 
 from ..core.cube import CubeError, HyperspectralCube
 from ..core.geo import GeoError, GeoTransform
+from ..core.hdf5 import Hdf5Source
 from ..core.library import LibraryError, SpectralLibrary
 from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
@@ -52,8 +53,15 @@ ETIQUETAS_REALCE = {
     "desviacion": "Media +- 2 sigma",
 }
 
-FILTRO_ARCHIVOS = ("Cubos hiperespectrales (*.hdr *.dat *.img *.bil *.bsq "
-                   "*.bip *.tif *.tiff);;Todos los archivos (*)")
+FILTRO_ARCHIVOS = (
+    "Cubos hiperespectrales (*.h5 *.he5 *.hdf5 *.hdr *.dat *.img *.bil "
+    "*.bsq *.bip *.tif *.tiff);;"
+    "HDF-EOS5 (*.h5 *.he5 *.hdf5);;"
+    "ENVI (*.hdr *.dat *.img *.bil *.bsq *.bip);;"
+    "Todos los archivos (*)")
+
+#: Identificador del algoritmo de extraccion, para abrirlo desde el panel.
+ALGORITMO_EXTRAER = "hdfeos_extractor:extraer_hdfeos_a_envi"
 
 
 TITULO = "Hyperspectral Explorer"
@@ -129,10 +137,17 @@ class HyperspectralDock(QtWidgets.QDockWidget):
                                       QtWidgets.QSizePolicy.Preferred)
         self.boton_abrir = QtWidgets.QPushButton("Abrir...")
         self.boton_abrir.setToolTip(
-            "Abre un cubo desde el disco y lo agrega al proyecto")
+            "Abre un cubo desde el disco: HDF-EOS5 directamente, o un ENVI "
+            "ya extraido")
+        self.boton_extraer = QtWidgets.QPushButton("Extraer a ENVI...")
+        self.boton_extraer.setToolTip(
+            "Escribe la escena HDF-EOS5 abierta en formato nativo de ENVI, "
+            "para llevarla a otro programa")
+        self.boton_extraer.setEnabled(False)
         rejilla.addWidget(QtWidgets.QLabel("Capa:"))
         rejilla.addWidget(self.combo_capa, 1)
         rejilla.addWidget(self.boton_abrir)
+        rejilla.addWidget(self.boton_extraer)
         return rejilla
 
     def _fila_modo(self):
@@ -274,6 +289,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
     def _conectar(self):
         self.combo_capa.currentIndexChanged.connect(self._capa_elegida)
         self.boton_abrir.clicked.connect(self._abrir_archivo)
+        self.boton_extraer.clicked.connect(self._extraer_a_envi)
         for clave, boton in self.modos.items():
             boton.toggled.connect(
                 lambda marcado, c=clave: marcado and self._cambiar_modo(c))
@@ -365,6 +381,36 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         if indice >= 0:
             self.combo_capa.setCurrentIndex(indice)
 
+    def es_hdf5_abierto(self):
+        """True si el cubo abierto se esta leyendo del HDF-EOS5 directo."""
+        cubo = self.controller.cube
+        return cubo is not None and isinstance(cubo.source, Hdf5Source)
+
+    def _extraer_a_envi(self):
+        """Abre el algoritmo de extraccion con el archivo ya puesto.
+
+        Se abre el dialogo de Processing en vez de extraer aca mismo, y no es
+        pereza: ese dialogo ya trae la eleccion de salidas -cubo, IGM, capas
+        auxiliares-, la barra de avance, la cancelacion y el registro. Ademas
+        deja el algoritmo a un paso del modo por lotes, que es lo que hace
+        falta cuando son treinta escenas y no una.
+        """
+        cubo = self.controller.cube
+        if cubo is None:
+            self._avisar("Primero abra una escena")
+            return
+        ruta = getattr(cubo.source, "ruta", None)
+        if not self.es_hdf5_abierto() or not ruta:
+            self._avisar("La extraccion a ENVI parte de un archivo HDF-EOS5")
+            return
+        try:
+            import processing
+            processing.execAlgorithmDialog(ALGORITMO_EXTRAER,
+                                           {"ENTRADA": ruta})
+        except Exception as exc:
+            self._avisar("No se pudo abrir el algoritmo de extraccion: %s"
+                         % exc)
+
     def _cargar_cubo(self, ruta, capa):
         try:
             cubo = HyperspectralCube.load(ruta)
@@ -390,9 +436,16 @@ class HyperspectralDock(QtWidgets.QDockWidget):
                cubo.wavelengths[0], cubo.wavelengths[-1],
                cubo.unidad_espectral))
         if capa is None:
-            self.estado.setText(
-                self.estado.text() + "\nQGIS no pudo abrir esta capa: "
-                "no habra imagen en el mapa.")
+            if self.es_hdf5_abierto():
+                self.estado.setText(
+                    self.estado.text() + "\nHDF-EOS5 abierto directamente. "
+                    "QGIS no dibuja el contenedor en el mapa; el cubo y el "
+                    "espectro si funcionan. Para verlo en el mapa, extraelo "
+                    "a ENVI.")
+            else:
+                self.estado.setText(
+                    self.estado.text() + "\nQGIS no pudo abrir esta capa: "
+                    "no habra imagen en el mapa.")
 
     def _preparar_controles(self, cubo):
         """Ajusta los controles al cubo recien abierto."""
@@ -413,6 +466,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
                   self.boton_csv, self.boton_guardar_lib,
                   self.combo_paleta, self.boton_rgb):
             w.setEnabled(activo)
+        # Extraer solo tiene sentido sobre un HDF-EOS5: sobre un ENVI ya
+        # extraido el boton no haria nada util.
+        self.boton_extraer.setEnabled(activo and self.es_hdf5_abierto())
         for deslizador, numero, _ in self.controles_banda.values():
             deslizador.setEnabled(activo)
             numero.setEnabled(activo)

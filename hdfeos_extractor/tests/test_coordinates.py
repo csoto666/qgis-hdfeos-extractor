@@ -4,7 +4,7 @@
 import numpy as np
 import pytest
 
-from hyperspectral_explorer.core.geo import GeoError, GeoTransform
+from hdfeos_extractor.core.geo import GeoError, GeoTransform
 
 # Escena tipica: origen en (500000, 4600000), pixel de 30 m, norte arriba.
 GT = (500000.0, 30.0, 0.0, 4600000.0, 0.0, -30.0)

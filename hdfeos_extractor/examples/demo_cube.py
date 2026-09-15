@@ -44,7 +44,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from hyperspectral_explorer.core import (  # noqa: E402
+from hdfeos_extractor.core import (  # noqa: E402
     HyperspectralCube, RGBComposer, SpectralLibrary, signature_from_pixel,
     signature_from_roi, spectral_angle)
 

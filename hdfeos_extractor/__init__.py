@@ -18,6 +18,15 @@
 # junto con este programa (archivo LICENSE). Si no, vea
 # <https://www.gnu.org/licenses/>.
 #
+"""Punto de entrada que busca QGIS al cargar el complemento.
+
+La importacion de ``plugin`` va adentro de la funcion y no arriba del archivo
+a proposito: asi ``hdfeos_extractor.core`` y ``hdfeos_extractor.lector`` se
+pueden importar desde Python puro -pruebas, Jupyter, un script- sin que QGIS
+tenga que existir.
+"""
+
+
 def classFactory(iface):
-    from .plugin import HdfEosExtractorPlugin
-    return HdfEosExtractorPlugin(iface)
+    from .plugin import HdfEosPlugin
+    return HdfEosPlugin(iface)

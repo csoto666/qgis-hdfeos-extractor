@@ -114,3 +114,85 @@ def wl():
 def escena(tmp_path, datos, wl):
     """Un cubo ENVI BIL en float32 con longitudes de onda."""
     return escribir_envi(tmp_path, datos, "bil", wl)
+
+
+# -----------------------------------------------------------------------------
+#  HDF-EOS5 sintetico
+# -----------------------------------------------------------------------------
+# El cubo se guarda en enteros con escala, que es como vienen los productos de
+# verdad y es el caso donde la conversion se puede equivocar sin que se note.
+ESCALA_H5 = 0.0001
+RELLENO_H5 = -9999
+RUTA_CUBO_H5 = "HDFEOS/SWATHS/HYP/Data Fields/surface_reflectance"
+
+
+def escribir_hdfeos(carpeta, reflectancia, wavelengths, fwhm=None,
+                    buenas=None, relleno_en=(), nombre="escena"):
+    """Escribe un HDF-EOS5 con la estructura de los productos reales.
+
+    ``reflectancia`` llega en ejes (y, x, banda) y en reflectancia; se guarda
+    como entero escalado y transpuesta a (banda, y, x), que es como la
+    almacena el contenedor.
+
+    ``relleno_en`` es una lista de (y, x) que se marcan como relleno.
+    """
+    import h5py
+
+    ruta = os.path.join(str(carpeta), nombre + ".h5")
+    datos = np.asarray(reflectancia, dtype=np.float64)
+    crudo = np.rint(datos / ESCALA_H5).astype(np.int16)
+    for y, x in relleno_en:
+        crudo[y, x, :] = RELLENO_H5
+    cubo = np.ascontiguousarray(crudo.transpose(2, 0, 1))   # (banda, y, x)
+
+    with h5py.File(ruta, "w") as f:
+        d = f.create_dataset(RUTA_CUBO_H5, data=cubo)
+        d.attrs["scale_factor"] = ESCALA_H5
+        d.attrs["add_offset"] = 0.0
+        d.attrs["_FillValue"] = np.int16(RELLENO_H5)
+        base = "HDFEOS/SWATHS/HYP/Data Fields/"
+        f.create_dataset(base + "wavelength",
+                         data=np.asarray(wavelengths, dtype=np.float32))
+        if fwhm is not None:
+            f.create_dataset(base + "fwhm",
+                             data=np.asarray(fwhm, dtype=np.float32))
+        if buenas is not None:
+            # El nombre lleva "good" a proposito: es el que usa Tanager y el
+            # que no debe robarse la busqueda de longitudes de onda.
+            f.create_dataset(base + "good_wavelengths",
+                             data=np.asarray(buenas, dtype=np.uint8))
+        geo = "HDFEOS/SWATHS/HYP/Geolocation Fields/"
+        alto, ancho = datos.shape[:2]
+        yy, xx = np.mgrid[0:alto, 0:ancho]
+        f.create_dataset(geo + "Longitude",
+                         data=(-70.0 + xx * 0.001).astype(np.float32))
+        f.create_dataset(geo + "Latitude",
+                         data=(-33.0 - yy * 0.001).astype(np.float32))
+    return ruta
+
+
+#: Bandas del cubo HDF5 de prueba. Mas que las del cubo ENVI a proposito:
+#: Escena descarta un eje espectral con menos de MIN_VALORES_DISTINTOS_WL
+#: valores distintos, por sospechoso, y con nueve bandas esa red de seguridad
+#: se dispara y la prueba mediria otra cosa.
+BANDAS_H5 = 24
+
+
+def longitudes_h5(bandas=BANDAS_H5):
+    return np.linspace(450.0, 2450.0, bandas)
+
+
+def reflectancia_patron(lineas=LINEAS, muestras=MUESTRAS, bandas=BANDAS_H5):
+    """Cubo de reflectancia cuyo valor codifica su posicion.
+
+    Los multiplicadores son 160 y 32 y no 10000 y 100: el cubo se guarda como
+    int16 con escala 0.0001, asi que el valor crudo no puede pasar de 32767.
+    Con los multiplicadores grandes el patron desbordaba y las posiciones
+    dejaban de ser unicas justo donde la prueba las necesita.
+    """
+    y = np.arange(lineas).reshape(lineas, 1, 1)
+    x = np.arange(muestras).reshape(1, muestras, 1)
+    b = np.arange(bandas).reshape(1, 1, bandas)
+    crudo = y * 160 + x * 32 + b
+    assert crudo.max() < 32767, "el patron desborda int16"
+    return (crudo * ESCALA_H5).astype(np.float64)

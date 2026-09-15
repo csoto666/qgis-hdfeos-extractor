@@ -170,6 +170,24 @@ class BackendH5(object):
         d = self._ds[ruta]
         return np.asarray(d[:, y0:y1, :] if d.ndim == 3 else d[y0:y1, :])
 
+    # -- lectura fina -------------------------------------------------------
+    # El extractor recorre el cubo entero por bloques de lineas y no necesita
+    # nada mas. El explorador si: un clic pide un solo espectro, y servirlo
+    # con leer_bloque leeria una fila completa de todas las bandas -megabytes
+    # para devolver unos cientos de valores-.
+
+    def leer_espectro(self, ruta, y, x):
+        """Espectro de un pixel: vector de largo bandas."""
+        return np.asarray(self._ds[ruta][:, y, x])
+
+    def leer_banda(self, ruta, b):
+        """Una banda completa: matriz (lineas, muestras)."""
+        return np.asarray(self._ds[ruta][b, :, :])
+
+    def leer_ventana(self, ruta, y0, y1, x0, x1):
+        """Sub-cubo (bandas, ny, nx)."""
+        return np.asarray(self._ds[ruta][:, y0:y1, x0:x1])
+
 
 class BackendGdal(object):
     """Respaldo con GDAL, que siempre viene con QGIS."""
@@ -238,7 +256,7 @@ class BackendGdal(object):
             salida[k[len(prefijo):]] = v
         return salida
 
-    def _leer_crudo(self, ruta, y0, ny):
+    def _leer_crudo(self, ruta, y0, ny, x0=0, nx=None):
         """Lee bloques con ReadRaster + frombuffer, nunca con ReadAsArray.
 
         ReadAsArray depende del modulo gdal_array, una extension en C
@@ -249,10 +267,12 @@ class BackendGdal(object):
         ReadRaster devuelve bytes crudos en el orden nativo de la maquina y
         no toca numpy, asi que este camino es inmune a ese desajuste."""
         d = self._abrir(ruta)
-        nx, nb = d.RasterXSize, d.RasterCount
+        if nx is None:
+            nx = d.RasterXSize
+        nb = d.RasterCount
         tipo = d.GetRasterBand(1).DataType
         npdt = np.dtype(tipo_gdal_a_numpy(self._gdal.GetDataTypeName(tipo)))
-        buf = d.ReadRaster(0, y0, nx, ny)          # todas las bandas, BSQ
+        buf = d.ReadRaster(x0, y0, nx, ny)         # todas las bandas, BSQ
         if buf is None:
             raise ErrorLectura("GDAL no devolvio datos para %s" % ruta)
         arr = np.frombuffer(buf, dtype=npdt)
@@ -263,6 +283,30 @@ class BackendGdal(object):
 
     def leer_bloque(self, ruta, y0, y1):
         return self._leer_crudo(ruta, y0, y1 - y0)
+
+    # -- lectura fina -------------------------------------------------------
+    def leer_espectro(self, ruta, y, x):
+        """Espectro de un pixel, en una sola llamada a GDAL.
+
+        Una llamada por banda seria lo natural y seria inservible: con 400
+        bandas son 400 viajes al driver HDF5 por cada clic. ReadRaster sobre
+        una ventana de 1x1 trae las 400 de una.
+        """
+        return self._leer_crudo(ruta, y, 1, x, 1)[:, 0, 0]
+
+    def leer_banda(self, ruta, b):
+        d = self._abrir(ruta)
+        banda = d.GetRasterBand(int(b) + 1)
+        npdt = np.dtype(tipo_gdal_a_numpy(
+            self._gdal.GetDataTypeName(banda.DataType)))
+        buf = banda.ReadRaster(0, 0, d.RasterXSize, d.RasterYSize)
+        if buf is None:
+            raise ErrorLectura("GDAL no devolvio la banda %s de %s" % (b, ruta))
+        return np.frombuffer(buf, dtype=npdt).reshape(d.RasterYSize,
+                                                      d.RasterXSize)
+
+    def leer_ventana(self, ruta, y0, y1, x0, x1):
+        return self._leer_crudo(ruta, y0, y1 - y0, x0, x1 - x0)
 
 
 def tipo_gdal_a_numpy(nombre):
@@ -556,6 +600,12 @@ class Escena(object):
         self.backend.cerrar()
 
     # -- escritura ----------------------------------------------------------
+    def relleno_escalado(self):
+        """El valor de relleno en las mismas unidades que el cubo escrito."""
+        if self.relleno is None:
+            return None
+        return self.relleno * self.escala + self.desfase
+
     def escribir_cubo(self, prefijo, avance=None, cancelado=None,
                       lineas_bloque=LINEAS_BLOQUE):
         """Escribe el cubo en ENVI BIL. Devuelve la ruta del .dat, o None
@@ -598,7 +648,14 @@ class Escena(object):
             "wavelength units": self.unidades,
         }
         if self.relleno is not None:
-            campos["data ignore value"] = self.relleno
+            # El relleno se escala igual que los datos. escribir_cubo aplica
+            # "crudo * escala + desfase", asi que anunciar el relleno crudo
+            # junto a datos escalados describe un valor que ya no existe en
+            # el archivo: los pixeles de relleno dejan de enmascararse y
+            # entran en las estadisticas y en el realce como si fueran
+            # medidas. Solo se nota cuando escala != 1, que es justo el caso
+            # en que el cubo viene en enteros.
+            campos["data ignore value"] = self.relleno_escalado()
 
         wl = (self.wavelengths if self.wavelengths is not None
               else np.arange(1, self.bandas + 1, dtype=float))

@@ -59,7 +59,7 @@ class FalsoIface(object):
 
 @pytest.fixture
 def panel(app, tmp_path):
-    from hyperspectral_explorer.qgis_ui.dock import HyperspectralDock
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
     from qgis.core import QgsRasterLayer
     hdr = escribir_envi(tmp_path, cubo_patron(), "bil", longitudes_patron())
     p = HyperspectralDock(FalsoIface())
@@ -79,7 +79,7 @@ def test_abrir_un_cubo_prepara_todos_los_controles(panel):
 
 
 def test_los_controles_arrancan_desactivados_sin_cubo(app):
-    from hyperspectral_explorer.qgis_ui.dock import HyperspectralDock
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
     p = HyperspectralDock(FalsoIface())
     assert not panel_habilitado(p)
 
@@ -89,7 +89,7 @@ def panel_habilitado(p):
 
 
 def test_un_archivo_que_no_se_puede_abrir_avisa_y_no_rompe(app, tmp_path):
-    from hyperspectral_explorer.qgis_ui.dock import HyperspectralDock
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
     basura = tmp_path / "basura.dat"
     basura.write_bytes(b"no soy un cubo")
     p = HyperspectralDock(FalsoIface())
@@ -150,7 +150,7 @@ def test_elegir_un_preset_actualiza_los_tres_canales(panel):
 
 
 def test_cambiar_de_modo_no_rompe_sin_herramienta(panel):
-    from hyperspectral_explorer.qgis_ui import map_tools
+    from hdfeos_extractor.qgis_ui import map_tools
     panel._activar_herramienta()
     for modo in (map_tools.MODO_X, map_tools.MODO_Y, map_tools.MODO_AREA,
                  map_tools.MODO_PIXEL):
@@ -286,3 +286,44 @@ def test_el_reparto_no_pisa_lo_que_el_usuario_arrastro(app, panel):
     panel._repartir()
     assert panel._divisor.sizes() == elegido
     ventana.close()
+
+
+# -- HDF-EOS5 en el panel -----------------------------------------------------
+def test_abrir_un_hdfeos5_directo_desde_el_panel(app, tmp_path):
+    """Sin escribir nada en disco: es la razon de que los dos plugins sean
+    uno solo."""
+    pytest.importorskip("h5py")
+    import numpy as np
+    from conftest import (escribir_hdfeos, longitudes_h5, reflectancia_patron)
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
+
+    reflectancia = reflectancia_patron()
+    ruta = escribir_hdfeos(tmp_path, reflectancia, longitudes_h5())
+    p = HyperspectralDock(FalsoIface())
+    p._cargar_cubo(ruta, None)              # QGIS no dibuja el contenedor
+    assert p.controller.cube is not None
+    assert p.es_hdf5_abierto()
+    assert np.allclose(p.controller.cube.get_spectrum(3, 2),
+                       reflectancia[2, 3, :], atol=1e-6)
+    # El cubo 3D funciona igual aunque no haya capa en el mapa.
+    assert p.cubo._superior is not None
+    assert "HDF-EOS5 abierto directamente" in p.estado.text()
+
+
+def test_extraer_solo_se_ofrece_sobre_un_hdfeos5(app, tmp_path, panel):
+    """Sobre un ENVI ya extraido el boton no haria nada util."""
+    assert not panel.es_hdf5_abierto()
+    assert not panel.boton_extraer.isEnabled()
+
+    pytest.importorskip("h5py")
+    from conftest import (escribir_hdfeos, longitudes_h5, reflectancia_patron)
+    ruta = escribir_hdfeos(tmp_path, reflectancia_patron(), longitudes_h5())
+    panel._cargar_cubo(ruta, None)
+    assert panel.boton_extraer.isEnabled()
+
+
+def test_extraer_sin_escena_avisa_en_vez_de_romper(app):
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
+    p = HyperspectralDock(FalsoIface())
+    p._extraer_a_envi()
+    assert "abra una escena" in p.estado.text()

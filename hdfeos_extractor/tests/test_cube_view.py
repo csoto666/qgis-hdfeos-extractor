@@ -14,9 +14,9 @@ import pytest
 pytest.importorskip("PyQt5", reason="hacen falta enlaces de Qt")
 
 from conftest import BANDAS, cubo_patron, longitudes_patron
-from hyperspectral_explorer.core.cube import HyperspectralCube
-from hyperspectral_explorer.core.rgb import RGBComposer
-from hyperspectral_explorer.vista.cube_view import CubeView, a_qimage
+from hdfeos_extractor.core.cube import HyperspectralCube
+from hdfeos_extractor.core.rgb import RGBComposer
+from hdfeos_extractor.vista.cube_view import CubeView, a_qimage
 
 
 @pytest.fixture(scope="module")

@@ -41,6 +41,7 @@ import os
 import numpy as np
 
 from .envi import EnviError, EnviSource
+from .hdf5 import Hdf5Source, es_hdf5
 from .sources import GdalSource, MemorySource
 
 # Cuantas bandas completas se guardan en memoria. Cada banda de una escena
@@ -87,25 +88,43 @@ class HyperspectralCube(object):
     # -- apertura -----------------------------------------------------------
     @classmethod
     def load(cls, path, **kwargs):
-        """Abre un cubo eligiendo el lector por la extension.
+        """Abre un cubo eligiendo el lector solo.
 
-        ENVI se prueba primero para todo lo que no sea claramente de GDAL,
-        porque un ``.dat`` con su ``.hdr`` al lado es el caso comun del flujo
-        hiperespectral y GDAL tambien lo abre -pero perdiendo el FWHM y la
-        bbl, que su driver ENVI no expone-.
+        El orden no es arbitrario:
+
+        HDF-EOS5 primero, y por la firma del archivo y no por la extension:
+        los productos circulan como .h5, .he5, .hdf5 y a veces sin sufijo
+        util. Se abre con el mismo nucleo que usa el extractor, que es lo que
+        permite mirar la escena sin extraer nada antes.
+
+        ENVI despues, para todo lo que no sea claramente de GDAL: un ``.dat``
+        con su ``.hdr`` al lado es el caso comun del flujo hiperespectral, y
+        GDAL tambien lo abre pero perdiendo el FWHM y la bbl, que su driver
+        ENVI no expone.
+
+        GDAL al final, como respaldo para GeoTIFF y lo demas.
         """
         if not os.path.exists(path):
             raise CubeError("No existe: %s" % path)
+        nombre = os.path.basename(path)
+
+        if es_hdf5(path):
+            try:
+                return cls(Hdf5Source(path), name=nombre, **kwargs)
+            except Exception:
+                # Un netCDF4 tiene la misma firma que un HDF5 y no es una
+                # escena hiperespectral. Que siga el camino normal en vez de
+                # fallar aca.
+                pass
+
         ext = os.path.splitext(path)[1].lower()
         if ext not in EXT_GDAL:
             try:
-                return cls(EnviSource(path), name=os.path.basename(path),
-                           **kwargs)
+                return cls(EnviSource(path), name=nombre, **kwargs)
             except EnviError:
                 pass          # no era ENVI; que lo intente GDAL
         try:
-            return cls(GdalSource(path), name=os.path.basename(path),
-                       **kwargs)
+            return cls(GdalSource(path), name=nombre, **kwargs)
         except Exception as exc:
             raise CubeError("No se pudo abrir %s: %s" % (path, exc))
 

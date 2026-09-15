@@ -8,9 +8,9 @@ import pytest
 
 from conftest import (BANDAS, LINEAS, MUESTRAS, cubo_patron, escribir_envi,
                       longitudes_patron)
-from hyperspectral_explorer.core.envi import (EnviError, EnviHeader,
-                                              EnviSource, find_hdr, read_hdr,
-                                              to_nanometers)
+from hdfeos_extractor.core.envi import (EnviError, EnviHeader,
+                                        EnviSource, find_hdr, read_hdr,
+                                        to_nanometers)
 
 
 # -- cabecera -----------------------------------------------------------------

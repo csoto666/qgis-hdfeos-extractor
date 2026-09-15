@@ -9,6 +9,7 @@ xarray se usan si estan y no se exigen.
 
 from .colormap import PALETAS, colorear
 from .cube import CubeError, HyperspectralCube
+from .hdf5 import Hdf5Source, es_hdf5
 from .envi import EnviError, EnviHeader, EnviSource
 from .geo import GeoError, GeoTransform
 from .library import LibraryError, SpectralLibrary
@@ -21,6 +22,7 @@ from .spectral import (Signature, SpectralProfile, signature_from_pixel,
 __all__ = [
     "PALETAS", "colorear",
     "CubeError", "HyperspectralCube",
+    "Hdf5Source", "es_hdf5",
     "EnviError", "EnviHeader", "EnviSource",
     "GeoError", "GeoTransform",
     "GdalSource", "MemorySource",

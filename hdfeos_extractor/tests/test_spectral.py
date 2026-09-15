@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 
 from conftest import BANDAS, cubo_patron, longitudes_patron
-from hyperspectral_explorer.core.cube import HyperspectralCube
-from hyperspectral_explorer.core.spectral import (Signature, SpectralProfile,
-                                                  signature_from_pixel,
-                                                  signature_from_pixels,
-                                                  signature_from_roi,
-                                                  spectral_angle, statistics)
+from hdfeos_extractor.core.cube import HyperspectralCube
+from hdfeos_extractor.core.spectral import (Signature, SpectralProfile,
+                                            signature_from_pixel,
+                                            signature_from_pixels,
+                                            signature_from_roi,
+                                            spectral_angle, statistics)
 
 
 @pytest.fixture

@@ -7,8 +7,8 @@ import json
 import numpy as np
 import pytest
 
-from hyperspectral_explorer.core.library import LibraryError, SpectralLibrary
-from hyperspectral_explorer.core.spectral import Signature
+from hdfeos_extractor.core.library import LibraryError, SpectralLibrary
+from hdfeos_extractor.core.spectral import Signature
 
 
 def firma(nombre, valores, wl=None):

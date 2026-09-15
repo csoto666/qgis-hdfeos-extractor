@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 from conftest import BANDAS, LINEAS, MUESTRAS, cubo_patron, longitudes_patron
-from hyperspectral_explorer.core.cube import HyperspectralCube
-from hyperspectral_explorer.core.rgb import PRESETS, RGBComposer, estirar
+from hdfeos_extractor.core.cube import HyperspectralCube
+from hdfeos_extractor.core.rgb import PRESETS, RGBComposer, estirar
 
 
 @pytest.fixture
@@ -185,7 +185,7 @@ def test_la_vista_previa_sale_mas_chica_pero_igual_de_valida():
 def test_los_limites_son_los_que_usa_el_estiramiento():
     """QGIS realza la capa con su propio motor; para que el mapa y el grafico
     coincidan tienen que partir del mismo par (lo, hi)."""
-    from hyperspectral_explorer.core.rgb import limites
+    from hdfeos_extractor.core.rgb import limites
     rng = np.random.default_rng(3)
     banda = rng.normal(0.3, 0.1, (30, 30)).astype(np.float32)
     for modo in ("percentil", "minmax", "reflectancia", "desviacion"):
@@ -202,5 +202,5 @@ def test_los_limites_son_los_que_usa_el_estiramiento():
 
 
 def test_los_limites_de_una_banda_toda_nan_son_neutros():
-    from hyperspectral_explorer.core.rgb import limites
+    from hdfeos_extractor.core.rgb import limites
     assert limites(np.full((3, 3), np.nan, dtype=np.float32)) == (0.0, 1.0)

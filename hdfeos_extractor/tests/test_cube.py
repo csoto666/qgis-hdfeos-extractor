@@ -6,7 +6,7 @@ import pytest
 
 from conftest import (BANDAS, LINEAS, MUESTRAS, cubo_patron, escribir_envi,
                       longitudes_patron)
-from hyperspectral_explorer.core.cube import CubeError, HyperspectralCube
+from hdfeos_extractor.core.cube import CubeError, HyperspectralCube
 
 
 @pytest.fixture
@@ -195,7 +195,7 @@ def test_la_banda_cacheada_no_sostiene_el_memmap(cubo):
 
 
 def test_el_cache_no_crece_sin_limite(datos, wl):
-    from hyperspectral_explorer.core import cube as mod
+    from hdfeos_extractor.core import cube as mod
     c = HyperspectralCube.from_array(datos, wl)
     for i in range(BANDAS):
         c.get_band(index=i)

@@ -4,8 +4,8 @@
 import numpy as np
 import pytest
 
-from hyperspectral_explorer.core.colormap import (COLOR_SIN_DATO, PALETAS,
-                                                  colorear, nombres, tabla)
+from hdfeos_extractor.core.colormap import (COLOR_SIN_DATO, PALETAS,
+                                            colorear, nombres, tabla)
 
 
 def test_la_tabla_tiene_la_forma_y_el_tipo_de_una_paleta():

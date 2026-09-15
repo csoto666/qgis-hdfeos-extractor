@@ -12,8 +12,8 @@ import pytest
 pytest.importorskip("PyQt5", reason="hacen falta enlaces de Qt")
 
 from conftest import BANDAS, cubo_patron, longitudes_patron
-from hyperspectral_explorer.core.cube import HyperspectralCube
-from hyperspectral_explorer.qgis_ui.controller import (
+from hdfeos_extractor.core.cube import HyperspectralCube
+from hdfeos_extractor.qgis_ui.controller import (
     MODO_AREA, MODO_PIXEL, MODO_X, MODO_Y, SpatialSpectralController)
 
 
@@ -285,7 +285,7 @@ def test_comparar_sin_biblioteca_devuelve_nada(ctrl):
 def test_la_firma_actual_se_dibuja_encima_de_todo(ctrl):
     """Es la que el usuario acaba de pedir: tiene que distinguirse de un
     vistazo de las guardadas."""
-    from hyperspectral_explorer.vista.spectral_plot import COLOR_ACTUAL
+    from hdfeos_extractor.vista.spectral_plot import COLOR_ACTUAL
     ctrl.on_pixel_changed(0, 0)
     ctrl.save_current("guardada")
     ctrl.on_pixel_changed(4, 4)

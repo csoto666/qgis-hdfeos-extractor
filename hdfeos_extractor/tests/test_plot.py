@@ -11,9 +11,9 @@ import pytest
 
 pytest.importorskip("PyQt5", reason="hacen falta enlaces de Qt")
 
-from hyperspectral_explorer.vista.spectral_plot import (Curva, SpectralPlot,
-                                                        _formato, _marcas,
-                                                        color_de)
+from hdfeos_extractor.vista.spectral_plot import (Curva, SpectralPlot,
+                                                  _formato, _marcas,
+                                                  color_de)
 
 
 @pytest.fixture(scope="module")
@@ -154,7 +154,7 @@ def test_el_lienzo_se_pinta_sin_datos_y_con_datos(app):
 
 
 def test_el_cursor_lee_el_valor_de_cada_curva(app):
-    from hyperspectral_explorer.vista.spectral_plot import _valor_en
+    from hdfeos_extractor.vista.spectral_plot import _valor_en
     c = Curva("a", [400.0, 500.0, 600.0], [0.1, 0.2, 0.3])
     assert _valor_en(c, 505.0) == pytest.approx(0.2)
     assert _valor_en(c, 10.0) == pytest.approx(0.1)     # se pega al extremo
@@ -191,7 +191,7 @@ def test_el_rotulo_del_eje_y_no_se_corta_en_un_panel_bajo(app):
 def test_la_cantidad_de_marcas_se_adapta_al_espacio():
     """Seis etiquetas en un eje de setenta pixeles se pisan y no se lee
     ninguna."""
-    from hyperspectral_explorer.vista.spectral_plot import _cuantas
+    from hdfeos_extractor.vista.spectral_plot import _cuantas
     assert _cuantas(70, 34) == 2
     assert _cuantas(600, 95) == 6
     assert _cuantas(10, 34) == 2          # nunca menos de dos
