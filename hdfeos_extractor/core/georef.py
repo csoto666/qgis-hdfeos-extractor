@@ -54,6 +54,7 @@ escriba el archivo resuelve el codigo, que es un paso trivial tanto en GDAL
 como en QGIS.
 """
 
+import json
 import re
 
 import numpy as np
@@ -670,9 +671,25 @@ def src_de_atributos(atributos):
     for clave, valor in (atributos or {}).items():
         llanos[str(clave).rsplit("/", 1)[-1].strip().lower()] = valor
 
+    def buscar(nombre):
+        """Por nombre exacto y, si no, por terminacion.
+
+        GDAL aplana la ruta del atributo en su nombre y lo hace con guiones
+        bajos, no con barras: el ``epsg_code`` de un grupo llega como
+        ``HDFEOS_GRIDS_HYP_epsg_code``. Cortar por la ultima barra no lo
+        desnuda, y exigir el nombre pelado es no encontrarlo nunca por el
+        camino de GDAL.
+        """
+        if nombre in llanos:
+            return llanos[nombre]
+        for clave, valor in llanos.items():
+            if clave.endswith("_" + nombre):
+                return valor
+        return None
+
     wkt = None
     for clave in CLAVES_WKT:
-        valor = _texto(llanos.get(clave))
+        valor = _texto(buscar(clave))
         # Un WKT de verdad nombra su tipo; un "spatial_ref" que solo trae un
         # numero es en realidad un EPSG y se trata como tal mas abajo.
         if valor and any(m in valor.upper()
@@ -682,11 +699,11 @@ def src_de_atributos(atributos):
 
     epsg = None
     for clave in CLAVES_EPSG:
-        epsg = _codigo_epsg(llanos.get(clave))
+        epsg = _codigo_epsg(buscar(clave))
         if epsg:
             break
     if epsg is None:
-        epsg = _codigo_epsg(llanos.get("spatial_ref"))
+        epsg = _codigo_epsg(buscar("spatial_ref"))
     return wkt, epsg
 
 
@@ -745,3 +762,73 @@ def _codigo_epsg(valor):
     except ValueError:
         return None
     return codigo if 1024 <= codigo <= 99999 else None
+
+
+def georreferencia_de_json(atributos):
+    """Busca un bloque JSON de encuadre entre los atributos del archivo.
+
+    Es como Planet georreferencia los productos ortho de Tanager: un atributo
+    -``Planet_Ortho_Framing``- cuyo valor es un JSON con el codigo EPSG, la
+    geotransformacion y el tamano de la imagen::
+
+        {"cols": 778, "epsg_code": 32619,
+         "geotransform": [355530.0, 30.0, 0.0, 1299210.0, 0.0, -30.0],
+         "rows": 657}
+
+    GDAL lo conserva como metadato auxiliar pero no lo aplica -es la
+    incidencia 12774 de GDAL-, asi que un producto perfectamente ubicado se
+    abre en coordenadas de pixel en cualquier programa que se fie del driver.
+
+    Se busca por el CONTENIDO y no por el nombre del atributo: lo que no
+    cambia es que el JSON tiene una clave ``geotransform``, mientras que el
+    nombre del atributo depende de quien escriba el archivo. Buscar
+    "Planet_Ortho_Framing" funcionaria hoy con Tanager y con nada mas.
+
+    Devuelve (gt, epsg, cols, rows) o None.
+    """
+    for clave, valor in (atributos or {}).items():
+        texto = _texto(valor)
+        if not texto or "geotransform" not in texto.lower():
+            continue
+        datos = _cargar_json(texto)
+        if not isinstance(datos, dict):
+            continue
+        llanos = {str(k).lower(): v for k, v in datos.items()}
+        gt = llanos.get("geotransform")
+        if not isinstance(gt, (list, tuple)) or len(gt) < 6:
+            continue
+        try:
+            gt = tuple(float(v) for v in gt[:6])
+        except (TypeError, ValueError):
+            continue
+        if gt[1] == 0.0 and gt[2] == 0.0:
+            continue                       # un pixel de ancho cero no ubica
+        epsg = None
+        for nombre in ("epsg_code", "epsg", "srs_epsg"):
+            epsg = _codigo_epsg(llanos.get(nombre))
+            if epsg:
+                break
+        del clave                          # solo se usaba para recorrer
+        return (gt, epsg, _entero(llanos.get("cols")),
+                _entero(llanos.get("rows")))
+    return None
+
+
+def _cargar_json(texto):
+    """JSON tolerante: los atributos HDF5 llegan con adornos alrededor.
+
+    Segun el backend, el valor puede venir con comillas de mas, como bytes ya
+    decodificados o envuelto en una lista. Se intenta tal cual y, si falla, se
+    recorta al primer bloque entre llaves.
+    """
+    try:
+        return json.loads(texto)
+    except (ValueError, TypeError):
+        pass
+    inicio, fin = texto.find("{"), texto.rfind("}")
+    if inicio < 0 or fin <= inicio:
+        return None
+    try:
+        return json.loads(texto[inicio:fin + 1])
+    except (ValueError, TypeError):
+        return None

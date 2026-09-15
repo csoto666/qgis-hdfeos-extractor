@@ -123,17 +123,15 @@ class Hdf5Source(object):
             return Georreferencia.ninguna(nota="el cubo ya esta cerrado")
         lineas, muestras = self.escena.lineas, self.escena.muestras
 
-        del_grid = self._georreferencia_del_grid(lineas, muestras)
-        if del_grid is not None and del_grid.tiene_mapa:
-            return del_grid
-
-        proyectada = self._georreferencia_proyectada(lineas, muestras)
-        if proyectada is not None and proyectada.tiene_mapa:
-            return proyectada
-
-        de_gdal = self._georreferencia_de_gdal()
-        if de_gdal is not None and de_gdal.tiene_mapa:
-            return de_gdal
+        # En orden de autoridad: primero lo que el productor declara de forma
+        # explicita, al final lo que hay que deducir.
+        for buscar in (self._georreferencia_de_encuadre,
+                       self._georreferencia_del_grid,
+                       self._georreferencia_proyectada,
+                       self._georreferencia_de_gdal):
+            hallada = buscar(lineas, muestras)
+            if hallada is not None and hallada.tiene_mapa:
+                return hallada
 
         try:
             ruta_lon, ruta_lat = self.escena.hallar_geolocalizacion()
@@ -178,7 +176,7 @@ class Hdf5Source(object):
                             "a mano")
         return georref
 
-    def _georreferencia_de_gdal(self):
+    def _georreferencia_de_gdal(self, lineas=None, muestras=None):
         """Ultimo recurso: preguntarle al driver de GDAL.
 
         GDAL lleva anos leyendo dialectos de HDF5 georreferenciado, y a veces
@@ -188,6 +186,7 @@ class Hdf5Source(object):
         driver. Pero antes de rendirse, vale la pena preguntar.
         """
         from .georef import Georreferencia
+        del lineas, muestras               # GDAL ya sabe el tamano
         try:
             from osgeo import gdal
         except ImportError:                # pragma: no cover - QGIS trae GDAL
@@ -265,6 +264,12 @@ class Hdf5Source(object):
             hay_estructura = False
         partes.append("StructMetadata: %s"
                       % ("si, pero sin grid" if hay_estructura else "no"))
+        atributos = self._atributos_globales()
+        con_gt = sorted({str(k).rsplit("/", 1)[-1]
+                         for k, v in atributos.items()
+                         if "geotransform" in (str(v) or "").lower()})[:4]
+        partes.append("atributos con geotransformacion: %s"
+                      % (", ".join(con_gt) if con_gt else "ninguno"))
         try:
             candidatas = sorted(
                 {r.rsplit("/", 1)[-1]
@@ -285,6 +290,34 @@ class Hdf5Source(object):
             partes.append("vectores 1D: " + ", ".join(unidim))
         return ". ".join(partes)
 
+    def _georreferencia_de_encuadre(self, lineas, muestras):
+        """El bloque de encuadre que el productor escribe como JSON.
+
+        Es como Planet georreferencia los Tanager ortho: un atributo con el
+        codigo EPSG, la geotransformacion y el tamano de la imagen. Va el
+        primero de todos porque es lo mas explicito que puede haber -el
+        productor diciendo literalmente donde esta la escena- y porque GDAL
+        no lo aplica, asi que nadie mas lo va a hacer.
+
+        Se comprueba que el encuadre describa ESTA imagen. Un producto puede
+        traer el encuadre de otra version del mismo dato, y usarlo cuando las
+        dimensiones no cuadran pondria la escena con la escala de la otra:
+        aterrizaria cerca, que es la peor clase de error porque parece bien.
+        """
+        from .georef import Georreferencia, georreferencia_de_json
+        hallado = georreferencia_de_json(self._atributos_globales())
+        if hallado is None:
+            return None
+        gt, epsg, cols, filas = hallado
+        if (cols and muestras and cols != muestras) or \
+                (filas and lineas and filas != lineas):
+            return Georreferencia.ninguna(
+                nota="el encuadre del producto describe una imagen de %sx%s y "
+                     "el cubo es de %sx%s: no son el mismo dato"
+                     % (cols, filas, muestras, lineas))
+        return Georreferencia(gt=gt, epsg=epsg,
+                              origen="encuadre del producto")
+
     def _georreferencia_del_grid(self, lineas, muestras):
         """La afin del StructMetadata, o None si el backend no lo sirve."""
         from .georef import Georreferencia
@@ -297,7 +330,18 @@ class Hdf5Source(object):
             return None
         if not texto:
             return None
-        return Georreferencia.de_estructura(texto, lineas, muestras)
+        georref = Georreferencia.de_estructura(texto, lineas, muestras)
+        if georref.tiene_mapa and not georref.tiene_src:
+            # El grid ubica la escena pero su proyeccion no se supo traducir.
+            # El producto suele declarar el codigo aparte -Tanager lo pone en
+            # un atributo epsg_code del grupo-, y con las coordenadas ya en la
+            # mano ese codigo es lo unico que falta.
+            from .georef import src_de_atributos
+            wkt, epsg = src_de_atributos(self._atributos_globales())
+            if wkt or epsg:
+                georref.wkt, georref.epsg = wkt, epsg
+                georref.nota = ""
+        return georref
 
     # -- lecturas -----------------------------------------------------------
     def _convertir(self, crudo):

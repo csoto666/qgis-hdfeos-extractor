@@ -742,3 +742,71 @@ def test_el_hdf5_sin_georreferencia_no_la_saca_de_gdal(tmp_path):
         assert not cubo.georreferencia.tiene_mapa
     finally:
         cubo.close()
+
+
+# -- el producto real ------------------------------------------------------
+#: Encabezado del grid tal como lo escribe Planet en un Tanager ortho. Copiado
+#: literal de 20250223_165546_32_4001_ortho_sr_hdf5.h5, recortado donde
+#: empiezan las dimensiones porque de ahi en adelante no hay nada que leer.
+#: Esta aqui porque una cabecera sintetica prueba mi idea de como es el
+#: formato, y esta prueba el formato.
+STRUCT_METADATA_TANAGER = """GROUP=GridStructure
+\tGROUP=GRID_1
+\t\tGridName="HYP"
+\t\tBand=426
+\t\tXDim=785
+\t\tYDim=655
+\t\tUpperLeftPointMtrs=(330480.00,1472610.00)
+\t\tLowerRightMtrs=(354030.00,1452960.00)
+\t\tProjection=HE5_GCTP_UTM
+\t\tZoneCode=16
+\t\tSphereCode=12
+\t\tCompressionType=HE5_HDFE_COMP_DEFLATE
+\t\tDeflateLevel=4
+\t\tPixelRegistration=HE5_HDFE_CORNER
+\t\tGridOrigin=HE5_HDFE_GD_UL
+\t\tEND_GROUP=GRID_1
+END_GROUP=GridStructure
+"""
+
+
+def test_el_grid_de_un_tanager_ortho_real():
+    """La escena entera, esquina a esquina, contra el archivo de verdad.
+
+    Los numeros no son inventados: son los del producto. El pixel sale de
+    dividir (354030 - 330480) entre 785 columnas, que da 30 m exactos, y el
+    codigo EPSG de combinar ZoneCode=16 con SphereCode=12.
+    """
+    g = Georreferencia.de_estructura(STRUCT_METADATA_TANAGER,
+                                     lineas=655, muestras=785)
+    assert g.es_afin and not g.necesita_remuestreo
+    assert g.epsg == 32616                       # UTM 16N, WGS84
+    assert g.gt == pytest.approx(
+        (330480.0, 30.0, 0.0, 1472610.0, 0.0, -30.0))
+
+    # La esquina inferior derecha del ultimo pixel es la que declara el
+    # archivo. Comprobarla ademas del origen es lo que atrapa un tamano de
+    # pixel equivocado, que con el origen bien puesto no se nota en la
+    # esquina de arriba.
+    x, y = g.transformacion.to_map(784, 654, centro=False)
+    assert (x + 30.0, y - 30.0) == pytest.approx((354030.0, 1452960.0))
+
+
+def test_el_encabezado_real_no_se_confunde_con_las_dimensiones():
+    """Tras las esquinas vienen bloques anidados con sus propios Size=.
+
+    El primer valor de cada clave es el bueno; si el lector se quedara con el
+    ultimo, XDim pasaria a ser el tamano de una dimension cualquiera.
+    """
+    from hdfeos_extractor.core.georef import parsear_struct_metadata
+    con_dimensiones = STRUCT_METADATA_TANAGER.replace(
+        "\t\tEND_GROUP=GRID_1",
+        "\t\tGROUP=Dimension\n"
+        "\t\t\tOBJECT=Dimension_1\n"
+        "\t\t\t\tDimensionName=\"XDim\"\n"
+        "\t\t\t\tSize=99999\n"
+        "\t\t\tEND_OBJECT=Dimension_1\n"
+        "\t\tEND_GROUP=Dimension\n"
+        "\t\tEND_GROUP=GRID_1")
+    resultado = parsear_struct_metadata(con_dimensiones)
+    assert resultado[4] == 785 and resultado[5] == 655
