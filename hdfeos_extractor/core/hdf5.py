@@ -127,6 +127,10 @@ class Hdf5Source(object):
         if del_grid is not None and del_grid.tiene_mapa:
             return del_grid
 
+        proyectada = self._georreferencia_proyectada(lineas, muestras)
+        if proyectada is not None and proyectada.tiene_mapa:
+            return proyectada
+
         try:
             ruta_lon, ruta_lat = self.escena.hallar_geolocalizacion()
             if not (ruta_lon and ruta_lat):
@@ -138,6 +142,73 @@ class Hdf5Source(object):
                 nota="no se pudieron leer las capas de lat/lon: %s" % exc)
         return Georreferencia.de_rejilla(lon, lat, lineas=lineas,
                                          muestras=muestras)
+
+    def _georreferencia_proyectada(self, lineas, muestras):
+        """La afin de un producto ya proyectado que no es un GRID clasico.
+
+        Un ortho puede llevar su georreferencia de dos formas mas, y las dos
+        son habituales fuera de HDF-EOS puro: una geotransformacion escrita
+        como atributo -lo que hace rioxarray-, o dos vectores con la
+        coordenada del centro de cada columna y cada fila, que es la
+        convencion CF. Ninguna de las dos incluye capas de latitud y
+        longitud, porque un producto proyectado no las necesita.
+        """
+        from .georef import (Georreferencia, geotransformacion_de_atributos,
+                             src_de_atributos)
+        atributos = self._atributos_globales()
+        wkt, epsg = src_de_atributos(atributos)
+
+        gt = geotransformacion_de_atributos(atributos)
+        if gt is not None:
+            return Georreferencia(gt=gt, wkt=wkt, epsg=epsg,
+                                  origen="atributos del producto")
+
+        ejes = self._ejes_de_coordenadas(lineas, muestras)
+        if ejes is None:
+            return None
+        x, y = ejes
+        georref = Georreferencia.de_ejes(x, y, wkt=wkt, epsg=epsg)
+        if georref.tiene_mapa and not georref.tiene_src:
+            georref.nota = ("el producto trae ejes de coordenadas pero no "
+                            "dice en que sistema: hay que asignarle el SRC "
+                            "a mano")
+        return georref
+
+    def _ejes_de_coordenadas(self, lineas, muestras):
+        """Los vectores x/y del producto, si su largo cuadra con la escena.
+
+        El largo es lo que los identifica. Un archivo puede tener varias
+        variables llamadas "x"; la que georreferencia el cubo es la que mide
+        exactamente lo que mide el cubo.
+        """
+        from .georef import EJES_X, EJES_Y
+        if self.escena is None:
+            return None
+        candidatos = {}
+        for ruta, (forma, _t) in self.escena.inventario.items():
+            if len(forma) != 1:
+                continue
+            hoja = ruta.rsplit("/", 1)[-1].strip().lower()
+            if forma[0] == muestras and hoja in EJES_X:
+                candidatos.setdefault("x", ruta)
+            elif forma[0] == lineas and hoja in EJES_Y:
+                candidatos.setdefault("y", ruta)
+        if "x" not in candidatos or "y" not in candidatos:
+            return None
+        try:
+            return (self.backend.leer_todo(candidatos["x"]),
+                    self.backend.leer_todo(candidatos["y"]))
+        except (ErrorLectura, OSError, KeyError, ValueError):
+            return None
+
+    def _atributos_globales(self):
+        leer = getattr(self.backend, "atributos_globales", None)
+        if leer is None:
+            return {}
+        try:
+            return leer() or {}
+        except Exception:                  # pragma: no cover - backend raro
+            return {}
 
     def _por_que_no_hay(self):
         """Que se busco y que habia, para poder diagnosticar sin el archivo.
@@ -165,6 +236,15 @@ class Hdf5Source(object):
             candidatas = []
         if candidatas:
             partes.append("capas 2D en el archivo: " + ", ".join(candidatas))
+        try:
+            unidim = sorted(
+                {r.rsplit("/", 1)[-1]
+                 for r, (forma, _t) in self.escena.inventario.items()
+                 if len(forma) == 1})[:12]
+        except (AttributeError, TypeError):    # pragma: no cover
+            unidim = []
+        if unidim:
+            partes.append("vectores 1D: " + ", ".join(unidim))
         return ". ".join(partes)
 
     def _georreferencia_del_grid(self, lineas, muestras):

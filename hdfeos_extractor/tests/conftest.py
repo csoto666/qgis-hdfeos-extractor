@@ -167,7 +167,8 @@ def estructura_grid(nx, ny, ulx=400000.0, uly=4500000.0, pixel=30.0, zona=18):
 
 def escribir_hdfeos(carpeta, reflectancia, wavelengths, fwhm=None,
                     buenas=None, relleno_en=(), nombre="escena",
-                    geolocalizacion=True, estructura=None):
+                    geolocalizacion=True, estructura=None,
+                    ejes=None, atributos=None):
     """Escribe un HDF-EOS5 con la estructura de los productos reales.
 
     ``reflectancia`` llega en ejes (y, x, banda) y en reflectancia; se guarda
@@ -215,6 +216,15 @@ def escribir_hdfeos(carpeta, reflectancia, wavelengths, fwhm=None,
         if estructura:
             f.create_dataset("HDFEOS INFORMATION/StructMetadata.0",
                              data=np.bytes_(estructura.encode("utf-8")))
+        # La otra forma de georreferenciar un ortho: ejes de coordenadas al
+        # estilo CF, con el sistema de referencia en un atributo.
+        if ejes is not None:
+            x, y = ejes
+            base = "HDFEOS/GRIDS/HYP/"
+            f.create_dataset(base + "x", data=np.asarray(x, dtype=np.float64))
+            f.create_dataset(base + "y", data=np.asarray(y, dtype=np.float64))
+        for clave, valor in (atributos or {}).items():
+            f.attrs[clave] = valor
     return ruta
 
 

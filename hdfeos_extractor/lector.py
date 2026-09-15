@@ -171,6 +171,32 @@ class BackendH5(object):
     def atributos(self, ruta):
         return dict(self._ds[ruta].attrs.items())
 
+    def atributos_globales(self):
+        """Atributos de la raiz y de cada grupo, en un solo diccionario.
+
+        Un HDF5 georreferenciado a la manera de CF no guarda la proyeccion en
+        el dataset del cubo: la cuelga de la raiz, de un grupo, o de una
+        variable suelta que solo existe para llevarla. Buscarla en un unico
+        sitio es no encontrarla.
+        """
+        salida = {}
+        try:
+            salida.update(dict(self._h5.attrs.items()))
+        except (OSError, RuntimeError, ValueError):
+            pass
+
+        def _visita(_nombre, obj):
+            try:
+                salida.update(dict(obj.attrs.items()))
+            except (OSError, RuntimeError, ValueError):
+                pass
+
+        try:
+            self._h5.visititems(_visita)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        return salida
+
     def leer_todo(self, ruta):
         return np.asarray(self._ds[ruta][:])
 
@@ -280,6 +306,10 @@ class BackendGdal(object):
                 continue
             salida[k[len(prefijo):]] = v
         return salida
+
+    def atributos_globales(self):
+        """GDAL ya aplana todos los atributos del archivo en la raiz."""
+        return dict(self._raiz)
 
     def texto_estructura(self):
         """El StructMetadata, si GDAL lo expone entre los metadatos.

@@ -318,6 +318,42 @@ class Georreferencia(object):
         return cls(gt=gt, epsg=epsg, origen="grid del producto", nota=nota)
 
     @classmethod
+    def de_ejes(cls, x, y, wkt=None, epsg=None, origen="ejes del producto"):
+        """Afin desde dos vectores de coordenadas, al estilo CF.
+
+        Es la otra forma de georreferenciar un producto ya proyectado: en vez
+        de una geotransformacion, dos vectores con la coordenada del centro
+        de cada columna y de cada fila. Es lo que escriben netCDF, xarray y
+        casi todo lo que no sea HDF-EOS clasico.
+
+        Los vectores dan CENTROS de pixel y la geotransformacion quiere la
+        ESQUINA, asi que hay que retroceder medio pixel. Olvidarlo corre la
+        capa justo medio pixel, que es el error que nadie ve y que descuadra
+        cualquier comparacion posterior.
+        """
+        x = np.asarray(x, dtype=np.float64).ravel()
+        y = np.asarray(y, dtype=np.float64).ravel()
+        if x.size < 2 or y.size < 2:
+            return cls.ninguna(nota="los ejes de coordenadas son demasiado "
+                                    "cortos para deducir el tamano de pixel")
+        px = float(x[1] - x[0])
+        py = float(y[1] - y[0])
+        if px == 0.0 or py == 0.0:
+            return cls.ninguna(nota="los ejes de coordenadas no avanzan")
+        # Se exige que el eje sea regular: si no lo es, no hay afin que lo
+        # describa y fingir una pondria mal todo menos las dos esquinas.
+        for eje, paso in ((x, px), (y, py)):
+            saltos = np.diff(eje)
+            if not np.allclose(saltos, paso, rtol=1e-4,
+                               atol=abs(paso) * 1e-4):
+                return cls.ninguna(
+                    nota="los ejes de coordenadas no son regulares: no hay "
+                         "una geotransformacion que los describa")
+        gt = (float(x[0]) - px / 2.0, px, 0.0,
+              float(y[0]) - py / 2.0, 0.0, py)
+        return cls(gt=gt, wkt=wkt, epsg=epsg, origen=origen)
+
+    @classmethod
     def de_rejilla(cls, lon, lat, por_lado=GCP_POR_LADO, epsg=EPSG_WGS84,
                    lineas=None, muestras=None):
         """Puntos de control desde las capas de longitud y latitud.
@@ -607,3 +643,105 @@ def _epsg_de_estructura(campos):
     return None, ("la proyeccion '%s' del grid no se traduce a un codigo "
                   "EPSG: la capa sale con coordenadas pero sin SRC, y hay "
                   "que asignarselo a mano" % (proyeccion or "sin nombre")), 1.0
+
+
+#: Nombres bajo los que un producto guarda su sistema de referencia. Son los
+#: de CF, los de rioxarray y los de GDAL, porque un HDF5 georreferenciado usa
+#: alguno de esos tres vocabularios y nunca dice cual.
+CLAVES_WKT = ("crs_wkt", "spatial_ref", "esri_pe_string", "wkt",
+              "coordinate_system_string", "projection_wkt", "srs")
+CLAVES_EPSG = ("epsg", "epsg_code", "spatial_epsg", "horizontal_datum_epsg")
+CLAVES_GT = ("geotransform", "geo_transform", "affine_transform")
+
+#: Nombres de los ejes de coordenadas proyectadas y geograficas.
+EJES_X = ("x", "easting", "xdim", "x_coordinate", "lon", "longitude")
+EJES_Y = ("y", "northing", "ydim", "y_coordinate", "lat", "latitude")
+
+
+def src_de_atributos(atributos):
+    """Busca un sistema de referencia entre atributos. Devuelve (wkt, epsg).
+
+    Se mira la clave sin distinguir mayusculas ni el grupo del que cuelga:
+    el mismo dato aparece como ``crs_wkt``, ``spatial_ref``, ``EPSG`` o
+    ``esri_pe_string`` segun quien escribiera el archivo, y exigir un nombre
+    concreto es quedarse sin georreferencia por una cuestion de vocabulario.
+    """
+    llanos = {}
+    for clave, valor in (atributos or {}).items():
+        llanos[str(clave).rsplit("/", 1)[-1].strip().lower()] = valor
+
+    wkt = None
+    for clave in CLAVES_WKT:
+        valor = _texto(llanos.get(clave))
+        # Un WKT de verdad nombra su tipo; un "spatial_ref" que solo trae un
+        # numero es en realidad un EPSG y se trata como tal mas abajo.
+        if valor and any(m in valor.upper()
+                         for m in ("PROJCS", "GEOGCS", "PROJCRS", "GEOGCRS")):
+            wkt = valor
+            break
+
+    epsg = None
+    for clave in CLAVES_EPSG:
+        epsg = _codigo_epsg(llanos.get(clave))
+        if epsg:
+            break
+    if epsg is None:
+        epsg = _codigo_epsg(llanos.get("spatial_ref"))
+    return wkt, epsg
+
+
+def geotransformacion_de_atributos(atributos):
+    """Una geotransformacion escrita como atributo, si la hay.
+
+    rioxarray deja los seis numeros en ``GeoTransform``, separados por
+    espacios. Cuando esta, es exacta y no hay que deducir nada.
+    """
+    for clave, valor in (atributos or {}).items():
+        if str(clave).rsplit("/", 1)[-1].strip().lower() not in CLAVES_GT:
+            continue
+        numeros = _numeros(valor)
+        if len(numeros) >= 6:
+            return tuple(numeros[:6])
+    return None
+
+
+def _texto(valor):
+    if valor is None:
+        return None
+    if isinstance(valor, bytes):
+        return valor.decode("utf-8", "replace")
+    if isinstance(valor, np.ndarray):
+        return _texto(valor.ravel()[0]) if valor.size else None
+    return str(valor)
+
+
+def _numeros(valor):
+    texto = _texto(valor)
+    if texto is None:
+        return []
+    salida = []
+    for t in re.findall(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", texto):
+        try:
+            salida.append(float(t))
+        except ValueError:
+            continue
+    return salida
+
+
+def _codigo_epsg(valor):
+    """Un codigo EPSG de un atributo que puede venir de cuatro formas.
+
+    ``32618``, ``"32618"``, ``"EPSG:32618"`` y ``"urn:ogc:def:crs:EPSG::32618"``
+    son el mismo dato escrito por cuatro programas distintos.
+    """
+    texto = _texto(valor)
+    if not texto:
+        return None
+    numeros = re.findall(r"\d{4,6}", texto)
+    if not numeros:
+        return None
+    try:
+        codigo = int(numeros[-1])
+    except ValueError:
+        return None
+    return codigo if 1024 <= codigo <= 99999 else None

@@ -558,3 +558,104 @@ def test_una_escena_de_sensor_no_finge_map_info(tmp_path):
     finally:
         escena.backend.cerrar()
     assert "map info" not in read_hdr(str(tmp_path / "sensor_cube.hdr"))
+
+
+# -- el ortho que no es un GRID clasico ------------------------------------
+def test_ejes_de_coordenadas_dan_la_afin():
+    """La convencion CF: dos vectores con el centro de cada fila y columna."""
+    x = 400000.0 + np.arange(10) * 30.0 + 15.0      # centros de pixel
+    y = 4500000.0 - np.arange(8) * 30.0 - 15.0
+    g = Georreferencia.de_ejes(x, y, epsg=32618)
+    assert g.es_afin and g.epsg == 32618
+    # La esquina esta medio pixel antes del primer centro. Olvidarlo corre la
+    # capa medio pixel, que es el error que nadie ve.
+    assert g.gt == pytest.approx((400000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0))
+
+
+def test_ejes_irregulares_no_son_una_afin():
+    """Si los ejes no avanzan a paso fijo, fingir una afin pone mal todo
+    menos las dos esquinas."""
+    x = np.array([0.0, 10.0, 25.0, 60.0])
+    y = np.array([0.0, -10.0, -20.0, -30.0])
+    assert not Georreferencia.de_ejes(x, y).tiene_mapa
+
+
+def test_ejes_demasiado_cortos():
+    assert not Georreferencia.de_ejes([1.0], [1.0]).tiene_mapa
+
+
+def test_el_src_se_busca_en_todo_el_vocabulario():
+    """El mismo dato se llama de cuatro formas distintas segun quien
+    escriba el archivo."""
+    from hdfeos_extractor.core.georef import src_de_atributos
+
+    wkt, epsg = src_de_atributos({"crs_wkt": 'PROJCS["WGS 84 / UTM zone 18N"]'})
+    assert wkt.startswith("PROJCS") and epsg is None
+    assert src_de_atributos({"EPSG": 32618})[1] == 32618
+    assert src_de_atributos({"epsg_code": "EPSG:32618"})[1] == 32618
+    assert src_de_atributos({"spatial_ref": "urn:ogc:def:crs:EPSG::32618"})[1]\
+        == 32618
+    assert src_de_atributos({}) == (None, None)
+    assert src_de_atributos({"epsg": "no"}) == (None, None)
+
+
+def test_una_geotransformacion_escrita_como_atributo():
+    """rioxarray deja los seis numeros en GeoTransform: cuando esta, es
+    exacta y no hay nada que deducir."""
+    from hdfeos_extractor.core.georef import geotransformacion_de_atributos
+
+    gt = geotransformacion_de_atributos(
+        {"GeoTransform": "400000.0 30.0 0.0 4500000.0 0.0 -30.0"})
+    assert gt == pytest.approx((400000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0))
+    assert geotransformacion_de_atributos({"otra cosa": "1 2 3"}) is None
+
+
+def test_un_ortho_con_ejes_cf_se_ubica(tmp_path):
+    """El mismo caso del grid, con el otro vocabulario.
+
+    Un producto ortorectificado no trae latitud y longitud porque no las
+    necesita. Si no guarda un GRID de HDF-EOS, guarda ejes de coordenadas; y
+    el explorador tiene que reconocer los dos.
+    """
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    from conftest import (escribir_hdfeos, longitudes_h5, reflectancia_patron)
+    from hdfeos_extractor.core.cube import HyperspectralCube
+
+    datos = reflectancia_patron()
+    alto, ancho = datos.shape[:2]
+    x = 400000.0 + np.arange(ancho) * 30.0 + 15.0
+    y = 4500000.0 - np.arange(alto) * 30.0 - 15.0
+    ruta = escribir_hdfeos(tmp_path, datos, longitudes_h5(),
+                           geolocalizacion=False, ejes=(x, y),
+                           atributos={"epsg": 32618})
+    cubo = HyperspectralCube.load(ruta)
+    try:
+        g = cubo.georreferencia
+        assert g.es_afin and g.epsg == 32618
+        assert not g.necesita_remuestreo
+        assert g.transformacion.to_map(0, 0) == pytest.approx(
+            (400015.0, 4499985.0))
+    finally:
+        cubo.close()
+
+
+def test_el_aviso_dice_que_se_busco_y_que_habia(tmp_path):
+    """"No hay georreferencia" no se puede depurar.
+
+    No distingue entre un grid que falta, unas capas que se llaman de otro
+    modo y una resolucion distinta. El aviso tiene que enumerar lo que el
+    contenedor si trae.
+    """
+    pytest.importorskip("h5py", reason="hace falta h5py")
+    from conftest import (escribir_hdfeos, longitudes_h5, reflectancia_patron)
+    from hdfeos_extractor.core.cube import HyperspectralCube
+
+    ruta = escribir_hdfeos(tmp_path, reflectancia_patron(), longitudes_h5(),
+                           geolocalizacion=False)
+    cubo = HyperspectralCube.load(ruta)
+    try:
+        nota = cubo.georreferencia.nota
+        assert "StructMetadata: no" in nota
+        assert "vectores 1D" in nota          # las longitudes de onda estan
+    finally:
+        cubo.close()
