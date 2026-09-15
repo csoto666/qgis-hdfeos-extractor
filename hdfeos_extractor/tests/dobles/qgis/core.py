@@ -26,6 +26,9 @@ class Crs(object):
     def authid(self):
         return "EPSG:32619"
 
+    def toWkt(self):
+        return 'PROJCS["WGS 84 / UTM zone 19S"]'   # basta para pasarlo a GDAL
+
     def __eq__(self, otro):
         return True
 

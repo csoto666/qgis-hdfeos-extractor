@@ -45,6 +45,10 @@ from .qt import QtCore, QtGui, QtWidgets, Qt, enum, pyqtSignal
 
 BOTON_IZQUIERDO = enum(Qt, "MouseButton", "LeftButton")
 BOTON_DERECHO = enum(Qt, "MouseButton", "RightButton")
+BOTON_CENTRAL = enum(Qt, "MouseButton", "MiddleButton")
+CURSOR_MANO = enum(Qt, "CursorShape", "OpenHandCursor")
+CURSOR_AGARRE = enum(Qt, "CursorShape", "ClosedHandCursor")
+CURSOR_CRUZ = enum(Qt, "CursorShape", "CrossCursor")
 ANTIALIAS = enum(QtGui.QPainter, "RenderHint", "Antialiasing")
 INTERPOLAR = enum(QtGui.QPainter, "RenderHint", "SmoothPixmapTransform")
 FORMATO_RGB = enum(QtGui.QImage, "Format", "Format_RGB888")
@@ -69,6 +73,10 @@ MUESTRAS_DE_RANGO = 5
 #: vista no depende de QGIS y la herramienta si: asi los dos usan los mismos.
 MODO_PIXEL, MODO_X, MODO_Y, MODO_AREA, MODO_MULTI = (
     "pixel", "x", "y", "area", "multi")
+#: Herramientas de navegacion. Separadas de las de muestreo porque no miden
+#: nada: solo cambian que parte se esta mirando.
+MODO_PAN, MODO_ZOOM = "pan", "zoom"
+MODOS_NAVEGACION = (MODO_PAN, MODO_ZOOM)
 
 #: Ancho reservado a la derecha para la barra de color, en pixeles.
 ANCHO_BARRA = 62
@@ -153,6 +161,7 @@ class CubeView(QtWidgets.QWidget):
         self._area = None             # rectangulo en curso, en modo area
         self._zoom = None             # rectangulo de zoom en curso
         self._zoom_desde = None
+        self._pan_desde = None        # punto de pantalla donde empezo el pan
 
         self._frontal = None          # QImage de la composicion
         self._superior = None         # QImage de la cara (x, banda)
@@ -229,6 +238,47 @@ class CubeView(QtWidgets.QWidget):
         self.vistaCambiada.emit(self.vista)
         self.update()
 
+    def desplazar(self, dx_pantalla, dy_pantalla):
+        """Corre la vista, en pixeles de PANTALLA.
+
+        Se convierte a pixeles de escena con la escala vigente para que la
+        imagen siga al cursor exactamente: si se arrastra 40 pixeles, la
+        escena se mueve 40 pixeles, este donde este el zoom. Desplazar en
+        unidades de escena hace que el arrastre se sienta lento al acercarse
+        y disparado al alejarse.
+        """
+        geometria = self._geometria()
+        if geometria is None:
+            return
+        _, ancho, alto, _ = geometria
+        if ancho <= 0 or alto <= 0:
+            return
+        dx = -dx_pantalla * self.ancho_visible() / float(ancho)
+        dy = -dy_pantalla * self.alto_visible() / float(alto)
+        x0, y0, x1, y1 = self.ventana()
+        # El corrimiento se recorta antes de aplicarlo, para que la vista no
+        # encoja al llegar al borde: arrastrar contra el canto deberia
+        # detenerse, no ir estrechando lo que se ve.
+        dx = max(-x0, min(dx, self.cube.samples - 1 - x1))
+        dy = max(-y0, min(dy, self.cube.lines - 1 - y1))
+        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+            return
+        self.set_vista((x0 + dx, y0 + dy, x1 + dx, y1 + dy))
+
+    def acercar(self, factor, centro=None):
+        """Acerca (factor < 1) o aleja (factor > 1) alrededor de un pixel."""
+        if not self._utilizable():
+            return
+        x0, y0, x1, y1 = self.ventana()
+        cx, cy = centro if centro else ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+        ancho = max(2.0, (x1 - x0 + 1) * factor)
+        alto = max(2.0, (y1 - y0 + 1) * factor)
+        if ancho >= self.cube.samples and alto >= self.cube.lines:
+            self.set_vista(None)
+            return
+        self.set_vista((cx - ancho / 2.0, cy - alto / 2.0,
+                        cx + ancho / 2.0, cy + alto / 2.0))
+
     def zoom_a_los_datos(self, margen=2):
         """Encuadra lo que tiene dato, dejando fuera el relleno y los ceros.
 
@@ -256,6 +306,8 @@ class CubeView(QtWidgets.QWidget):
         self._area = None
         if modo != MODO_MULTI:
             self.limpiar_seleccion()
+        self.setCursor(QtGui.QCursor(
+            CURSOR_MANO if modo == MODO_PAN else CURSOR_CRUZ))
         self.update()
 
     def limpiar_seleccion(self):
@@ -528,19 +580,23 @@ class CubeView(QtWidgets.QWidget):
             y = arriba + t * alto
             p.drawLine(QtCore.QPointF(izquierda + ancho, y),
                        QtCore.QPointF(izquierda + ancho + 3, y))
-            p.drawText(QtCore.QRectF(izquierda + ancho + 5, y - 7,
-                                     ANCHO_BARRA - ancho - 12, 14),
-                       izq | vcentro, _corto(valor))
-        # El rotulo se acorta al ancho que de verdad queda hasta el borde.
-        # Con un rectangulo fijo, "reflectancia" se cortaba contra el canto
-        # del widget y quedaba "reflectanc".
-        disponible = max(20.0, self.width() - (izquierda - 4) - 4)
-        metrica = QtGui.QFontMetrics(p.font())
-        rotulo = metrica.elidedText(self.unidad or "valor",
-                                    enum(Qt, "TextElideMode", "ElideRight"),
-                                    int(disponible))
-        p.drawText(QtCore.QRectF(izquierda - 4, arriba - 16, disponible, 14),
-                   izq | vcentro, rotulo)
+            # El ancho se mide hasta el borde real del widget: calculado
+            # desde ANCHO_BARRA se pasaba un pixel y cortaba el ultimo digito.
+            p.drawText(QtCore.QRectF(
+                izquierda + ancho + 5, y - 7,
+                max(10.0, self.width() - (izquierda + ancho + 5) - 4), 14),
+                izq | vcentro, _corto(valor))
+        # El rotulo va girado, a la izquierda de la barra. Horizontal no
+        # entra: la franja mide sesenta pixeles y ahi ya estan los numeros,
+        # asi que "reflectancia" quedaba en "refle...". De lado hay todo el
+        # alto de la barra para escribirlo entero.
+        p.save()
+        p.translate(izquierda - 4, arriba + alto / 2.0)
+        p.rotate(-90)
+        p.drawText(QtCore.QRectF(-alto / 2.0, -14, alto, 14),
+                   enum(Qt, "AlignmentFlag", "AlignCenter"),
+                   self.unidad or "valor")
+        p.restore()
 
     def _pintar_seleccion(self, p, A, ancho, alto):
         """Los pixeles sueltos ya elegidos, en modo multiple."""
@@ -705,19 +761,32 @@ class CubeView(QtWidgets.QWidget):
         if not self._utilizable():
             return
         punto = self._posicion(evento)
-        if evento.button() == BOTON_DERECHO:
-            # El boton derecho es siempre el zoom, en cualquier modo: asi el
-            # izquierdo queda entero para lo que el modo diga, y acercarse no
-            # obliga a cambiar de modo y volver.
-            pixel = self._pixel_en(punto)
-            self._zoom = None if pixel is None else (pixel + pixel)
-            self._zoom_desde = pixel
+        boton = evento.button()
+
+        # El boton central desplaza siempre, sin importar la herramienta. Es
+        # el gesto que ya tiene todo el mundo en la mano; la herramienta Pan
+        # existe para los trackpads que no tienen boton central.
+        if boton == BOTON_CENTRAL or (boton == BOTON_IZQUIERDO
+                                      and self.modo == MODO_PAN):
+            self._pan_desde = punto
+            self.setCursor(QtGui.QCursor(CURSOR_AGARRE))
             return
-        if evento.button() != BOTON_IZQUIERDO:
+
+        if boton == BOTON_DERECHO:
+            # Alejar del todo. Es el unico gesto del boton derecho: antes
+            # arrastraba un rectangulo de zoom y se sentia raro, porque el
+            # boton derecho no arrastra en ninguna otra parte de QGIS.
+            self.set_vista(None)
+            return
+        if boton != BOTON_IZQUIERDO:
             return
 
         pixel = self._pixel_en(punto)
         if pixel is not None:
+            if self.modo == MODO_ZOOM:
+                self._zoom = pixel + pixel
+                self._zoom_desde = pixel
+                return
             self._empezar_gesto(pixel)
             return
         for nombre in ("superior", "derecha"):
@@ -745,6 +814,11 @@ class CubeView(QtWidgets.QWidget):
 
     def mouseMoveEvent(self, evento):
         punto = self._posicion(evento)
+        if self._pan_desde is not None:
+            self.desplazar(punto.x() - self._pan_desde.x(),
+                           punto.y() - self._pan_desde.y())
+            self._pan_desde = punto
+            return
         if self._zoom is not None and self._zoom_desde is not None:
             pixel = self._pixel_en(punto)
             if pixel is not None:
@@ -763,13 +837,16 @@ class CubeView(QtWidgets.QWidget):
         self._mover_a_pixel(*pixel)
 
     def mouseReleaseEvent(self, evento):
-        if evento.button() == BOTON_DERECHO:
+        if self._pan_desde is not None:
+            self._pan_desde = None
+            self.setCursor(QtGui.QCursor(
+                CURSOR_MANO if self.modo == MODO_PAN else CURSOR_CRUZ))
+            return
+        if self._zoom is not None:
             zona, self._zoom, self._zoom_desde = self._zoom, None, None
-            if zona is None:
-                return
             x0, y0, x1, y1 = zona
             if abs(x1 - x0) < 2 and abs(y1 - y0) < 2:
-                self.set_vista(None)      # clic derecho seco: ver todo
+                self.update()          # un clic suelto no acerca a nada
             else:
                 self.set_vista(zona)
             return
@@ -789,28 +866,18 @@ class CubeView(QtWidgets.QWidget):
             eje = "x" if self.modo == MODO_X else "y"
             self.transectoPedido.emit(eje, self.x if eje == "x" else self.y)
             return
-        self.pixelElegido.emit(self.x, self.y)
+        if self.modo not in MODOS_NAVEGACION:
+            self.pixelElegido.emit(self.x, self.y)
 
     def wheelEvent(self, evento):
         """Rueda: acerca y aleja alrededor del cursor."""
         if not self._utilizable():
             return
         pixel = self._pixel_en(self._posicion(evento))
-        if pixel is None:
-            return
         pasos = evento.angleDelta().y() / 120.0
         if not pasos:
             return
-        factor = 0.8 ** pasos
-        x0, y0, x1, y1 = self.ventana()
-        cx, cy = pixel
-        ancho = max(2.0, (x1 - x0 + 1) * factor)
-        alto = max(2.0, (y1 - y0 + 1) * factor)
-        if (ancho >= self.cube.samples and alto >= self.cube.lines):
-            self.set_vista(None)
-            return
-        self.set_vista((cx - ancho / 2.0, cy - alto / 2.0,
-                        cx + ancho / 2.0, cy + alto / 2.0))
+        self.acercar(0.8 ** pasos, pixel)
 
     def mouseDoubleClickEvent(self, evento):
         """Doble clic en el frente: vuelve a la composicion RGB.

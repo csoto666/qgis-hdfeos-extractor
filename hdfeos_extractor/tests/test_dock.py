@@ -293,20 +293,6 @@ def test_abrir_otra_escena_cierra_la_anterior(panel, tmp_path):
     assert not panel.controller.cube.cerrado
 
 
-def test_el_alto_se_reparte_siguiendo_al_tamano(app, panel):
-    """En el primer showEvent la geometria no esta asentada: si el reparto se
-    hiciera solo ahi, saldria contra un alto que no es el final y el perfil
-    quedaria en una franja."""
-    ventana = _en_una_ventana(panel, 520, 900)
-    tamanos = panel._divisor.sizes()
-    assert len(tamanos) == 2
-    assert tamanos[0] > tamanos[1] > 80
-    ventana.resize(520, 1300)
-    _asentar(app)
-    assert panel._divisor.sizes()[0] > tamanos[0]
-    ventana.close()
-
-
 def _en_una_ventana(panel, ancho, alto):
     """El panel es un QDockWidget: sin acoplarlo no recibe showEvent."""
     from PyQt5.QtCore import Qt
@@ -324,26 +310,6 @@ def _asentar(app):
         app.processEvents()
 
 
-def test_el_reparto_no_pisa_lo_que_el_usuario_arrastro(app, panel):
-    """En cuanto el usuario arrastra, la proporcion la eligio el y el panel
-    deja de rehacerla."""
-    ventana = _en_una_ventana(panel, 520, 900)
-
-    # Antes de que el usuario toque nada, el panel si reparte.
-    panel._divisor.setSizes([100, 400])
-    panel._repartir()
-    assert panel._divisor.sizes() != [100, 400]
-
-    # Despues de arrastrar, deja de hacerlo.
-    panel._divisor_arrastrado()
-    panel._divisor.setSizes([260, 300])
-    elegido = panel._divisor.sizes()
-    panel._repartir()
-    assert panel._divisor.sizes() == elegido
-    ventana.close()
-
-
-# -- HDF-EOS5 en el panel -----------------------------------------------------
 def test_abrir_un_hdfeos5_directo_desde_el_panel(app, tmp_path):
     """Sin escribir nada en disco: es la razon de que los dos plugins sean
     uno solo."""
@@ -491,7 +457,7 @@ def test_cambiar_la_mascara_recalcula_la_firma_en_pantalla(panel_ancho):
 def test_el_modo_llega_al_cubo_y_no_solo_al_mapa(panel):
     """Con un HDF-EOS5 abierto no hay capa en el mapa, asi que la herramienta
     de mapa no tiene donde actuar: si el modo no llegara tambien al cubo, los
-    cuatro modos pareceria que no hacen nada."""
+    modos pareceria que no hacen nada."""
     from hdfeos_extractor.qgis_ui import map_tools
     panel._activar_herramienta()
     for modo in (map_tools.MODO_X, map_tools.MODO_Y, map_tools.MODO_AREA,
@@ -499,6 +465,19 @@ def test_el_modo_llega_al_cubo_y_no_solo_al_mapa(panel):
         panel._cambiar_modo(modo)
         assert panel.herramienta.modo == modo
         assert panel.cubo.modo == modo
+
+
+def test_desplazar_y_acercar_no_pisan_los_gestos_de_qgis(panel):
+    """Sobre el mapa esos gestos ya los da QGIS. La herramienta del plugin se
+    queda en el ultimo modo de muestreo en vez de robarselos."""
+    from hdfeos_extractor.qgis_ui import map_tools
+    from hdfeos_extractor.vista.cube_view import MODO_PAN, MODO_ZOOM
+    panel._activar_herramienta()
+    panel._cambiar_modo(map_tools.MODO_AREA)
+    for navegacion in (MODO_PAN, MODO_ZOOM):
+        panel._cambiar_modo(navegacion)
+        assert panel.cubo.modo == navegacion          # el cubo si cambia
+        assert panel.herramienta.modo == map_tools.MODO_AREA
 
 
 def test_un_conjunto_de_pixeles_da_una_firma_con_variabilidad(panel):
@@ -541,3 +520,31 @@ def test_las_acciones_de_biblioteca_siguen_existiendo(panel):
     assert any("Abrir" in t for t in etiquetas)
     assert any("Guardar" in t for t in etiquetas)
     assert any("CSV" in t for t in etiquetas)
+
+
+# -- envio de la vista al mapa ------------------------------------------------
+def test_enviar_sin_escena_avisa(app):
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
+    p = HyperspectralDock(FalsoIface())
+    p._enviar_a_qgis()
+    assert "abra una escena" in p.estado.text()
+
+
+def test_enviar_sin_gdal_avisa_en_vez_de_romper(panel, monkeypatch):
+    """GDAL viene con QGIS, pero el nucleo se prueba sin el: si falta, el
+    panel tiene que decirlo y seguir andando."""
+    import hdfeos_extractor.qgis_ui.exportar as exportar
+    if exportar.gdal is not None:
+        pytest.skip("hay GDAL: este es el camino sin el")
+    panel._enviar_a_qgis()
+    assert "No se pudo escribir la vista" in panel.estado.text()
+
+
+def test_abrir_una_escena_muestra_la_ventana_del_cubo(panel):
+    assert panel.ventana_cubo.cubo.cube is panel.controller.cube
+
+
+def test_el_boton_abre_la_ventana(panel):
+    panel._mostrar_ventana_cubo()
+    assert not panel.ventana_cubo.isHidden()
+    panel.ventana_cubo.close()

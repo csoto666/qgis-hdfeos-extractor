@@ -41,8 +41,8 @@ from ..vista.qt import QtGui, Qt, pyqtSignal
 
 # Los modos se definen en la vista del cubo, que no depende de QGIS, para que
 # el cubo y el mapa usen exactamente los mismos.
-from ..vista.cube_view import (MODO_AREA, MODO_MULTI, MODO_PIXEL,  # noqa: E402
-                               MODO_X, MODO_Y)
+from ..vista.cube_view import (MODO_AREA, MODO_MULTI,  # noqa: E402
+                               MODO_PIXEL, MODO_X, MODO_Y)
 
 COLOR_PIXEL = QtGui.QColor(255, 220, 0)
 COLOR_LINEA = QtGui.QColor(106, 81, 163)

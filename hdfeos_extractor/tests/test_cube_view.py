@@ -451,3 +451,79 @@ def test_la_barra_se_pinta_con_el_rango_vigente(vista):
     vista.render(_lienzo(vista))       # pinta la barra sin reventar
     vista.set_paleta("viridis")
     vista.render(_lienzo(vista))
+
+
+# -- desplazar y acercar ------------------------------------------------------
+def test_desplazar_corre_la_ventana(vista):
+    vista.set_vista((20, 20, 40, 35))
+    antes = vista.ventana()
+    vista.render(_lienzo(vista))
+    vista.desplazar(-30, -20)          # arrastrar hacia arriba y a la izq.
+    ahora = vista.ventana()
+    assert ahora[0] > antes[0] and ahora[1] > antes[1]
+    assert (ahora[2] - ahora[0]) == (antes[2] - antes[0])   # no encoge
+
+
+def test_desplazar_contra_el_borde_se_detiene(vista, cubo):
+    """Arrastrar contra el canto deberia detenerse, no ir estrechando lo que
+    se ve."""
+    vista.set_vista((0, 0, 20, 15))
+    vista.render(_lienzo(vista))
+    vista.desplazar(500, 500)          # muy hacia la derecha y abajo
+    x0, y0, x1, y1 = vista.ventana()
+    assert (x0, y0) == (0, 0)
+    assert (x1 - x0, y1 - y0) == (20, 15)
+
+
+def test_desplazar_sigue_al_cursor_con_cualquier_zoom(vista):
+    """El corrimiento se mide en pixeles de pantalla. En unidades de escena,
+    el arrastre se siente lento al acercarse y disparado al alejarse."""
+    vista.render(_lienzo(vista))
+    vista.set_vista((0, 0, 39, 29))
+    _, ancho, _, _ = vista._geometria()
+    vista.desplazar(-ancho / 4.0, 0)
+    x0 = vista.ventana()[0]
+    assert x0 == pytest.approx(40 / 4.0, abs=1.5)
+
+
+def test_acercar_y_alejar_desde_los_botones(vista, cubo):
+    vista.acercar(0.5)
+    assert vista.ancho_visible() < cubo.samples
+    vista.acercar(100.0)               # alejar mucho: vuelve a todo
+    assert vista.vista is None
+
+
+def test_el_boton_derecho_vuelve_a_ver_todo(vista):
+    from PyQt5.QtCore import QPointF, Qt
+    vista.set_vista((5, 5, 15, 15))
+
+    class Clic(object):
+        def button(self):
+            return Qt.RightButton
+
+        def pos(self):
+            return QPointF(10.0, 10.0)
+    vista.mousePressEvent(Clic())
+    assert vista.vista is None
+
+
+def test_la_herramienta_pan_cambia_el_cursor(vista):
+    from PyQt5.QtCore import Qt
+    vista.set_modo("pan")
+    assert vista.cursor().shape() == Qt.OpenHandCursor
+    vista.set_modo("pixel")
+    assert vista.cursor().shape() == Qt.CrossCursor
+
+
+def test_en_modo_navegacion_no_se_emite_ningun_pixel(vista):
+    from PyQt5.QtCore import Qt
+    elegidos = []
+    vista.pixelElegido.connect(lambda x, y: elegidos.append((x, y)))
+    vista.set_modo("pan")
+    vista._arrastrando = True
+
+    class Suelta(object):
+        def button(self):
+            return Qt.LeftButton
+    vista.mouseReleaseEvent(Suelta())
+    assert elegidos == []
