@@ -207,10 +207,39 @@ Desde el código fuente:
 ./empaquetar.sh
 ```
 
-y en QGIS: **Complementos → Instalar a partir de ZIP**.
+y en QGIS: **Complementos → Instalar a partir de ZIP**, eligiendo el
+`hdfeos_extractor-<version>.zip` que deja ese script.
 
-> No uses el botón «Download ZIP» de GitHub: genera una carpeta raíz con el
-> nombre del repositorio y QGIS toma ese nombre como nombre del complemento.
+### No uses el botón «Download ZIP» de GitHub
+
+Ese ZIP trae una carpeta raíz llamada `qgis-hdfeos-extractor-main`, y QGIS
+toma el nombre de la carpeta como nombre del complemento. Como el plugin vive
+un nivel más adentro, QGIS arma un nombre de módulo con barra y guiones —que
+no es un identificador válido de Python— y la carga falla así:
+
+```
+Couldn't load plugin 'qgis-hdfeos-extractor-main/hdfeos_extractor'
+ModuleNotFoundError: No module named 'qgis-hdfeos-extractor-main/hdfeos_extractor'
+```
+
+Si ya te pasó: borrá la carpeta `qgis-hdfeos-extractor-main` de
+
+```
+~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/   (macOS)
+~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/                  (Linux)
+%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\                     (Windows)
+```
+
+y volvé a instalar con el ZIP de `empaquetar.sh`. La otra opción, sin script,
+es copiar a mano la carpeta `hdfeos_extractor/` del repositorio dentro de ese
+mismo directorio de plugins —tiene que quedar `.../plugins/hdfeos_extractor/`,
+con `__init__.py` y `metadata.txt` directamente adentro— y reiniciar QGIS.
+
+### Requisitos de versión
+
+Probado contra QGIS 3.16 en adelante. El código no usa sintaxis posterior a
+Python 3.8, así que funciona en el Python 3.9 que traen las compilaciones de
+QGIS para macOS.
 
 ## Uso del núcleo sin QGIS
 
