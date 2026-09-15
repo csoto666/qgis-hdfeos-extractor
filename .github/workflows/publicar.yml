@@ -1,25 +1,33 @@
-# Publica el ZIP instalable como Release al empujar una etiqueta vX.Y.
+# Publica el ZIP instalable como Release.
 #
 # Es la respuesta al problema que se lleva a la gente por delante: el boton
 # "Download ZIP" de GitHub entrega el codigo fuente con una carpeta raiz que
 # QGIS no puede usar como nombre de modulo. Con un Release, el archivo que se
 # ofrece para descargar es el ZIP correcto y ya no hay que explicar nada.
 #
-#   git tag v2.0 && git push origin v2.0
+# Dos maneras de lanzarlo, y las dos terminan igual:
+#
+#   Desde la pestana Actions -> publicar -> "Run workflow". Toma la version de
+#   metadata.txt, crea la etiqueta y publica. No hace falta git local.
+#
+#   Empujando una etiqueta:  git tag v2.0 && git push origin v2.0
 name: publicar
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
-  contents: write          # hace falta para crear el Release
+  contents: write          # hace falta para crear la etiqueta y el Release
 
 jobs:
   publicar:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -32,14 +40,33 @@ jobs:
       - name: No se publica un ZIP mal formado
         run: python -m pytest hdfeos_extractor/tests/test_paquete.py -q
 
-      - name: La etiqueta y metadata.txt tienen que coincidir
+      - name: Resolver la version
+        id: version
         run: |
-          # Si no coinciden, el archivo publicado dice una version y el plugin
-          # instalado declara otra, y nadie sabe cual es cual.
+          # La version manda desde metadata.txt, que es lo que QGIS lee. Si
+          # viene por etiqueta se exige que coincidan: si no, el archivo
+          # publicado diria una version y el plugin instalado otra.
           META=$(sed -n 's/^version=//p' hdfeos_extractor/metadata.txt)
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "metadata.txt: $META   etiqueta: $TAG"
-          test "$META" = "$TAG"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+            echo "metadata.txt: $META   etiqueta: ${TAG#v}"
+            test "$META" = "${TAG#v}"
+          else
+            TAG="v$META"
+            echo "lanzado a mano; la etiqueta sale de metadata.txt: $TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Crear la etiqueta si no existe
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "la etiqueta $TAG ya existe"
+          else
+            git tag -a "$TAG" -m "HDF-EOS Explorer ${TAG#v}"
+            git push origin "$TAG"
+          fi
 
       - name: Armar el ZIP
         run: ./empaquetar.sh
@@ -47,11 +74,27 @@ jobs:
       - name: Publicar el Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "$GITHUB_REF_NAME" hdfeos_extractor-*.zip \
-            --title "$GITHUB_REF_NAME" \
-            --notes "Instalacion en QGIS: **Complementos -> Instalar a partir de ZIP**, eligiendo el \`hdfeos_extractor-*.zip\` de aca abajo.
+          NOTAS=$(cat <<TXT
+          Instalacion en QGIS: **Complementos -> Instalar a partir de ZIP**,
+          eligiendo el \`hdfeos_extractor-*.zip\` de aca abajo.
 
-          No uses el boton verde \"Code -> Download ZIP\": ese entrega el codigo fuente con una carpeta raiz que QGIS no puede usar como nombre de modulo, y la carga falla con \`ModuleNotFoundError\`.
+          No uses el boton verde "Code -> Download ZIP": ese entrega el codigo
+          fuente con una carpeta raiz que QGIS no puede usar como nombre de
+          modulo, y la carga falla con \`ModuleNotFoundError\`.
 
-          Los cambios de esta version estan en \`changelog\` dentro de [metadata.txt](https://github.com/csoto666/qgis-hdfeos-extractor/blob/$GITHUB_REF_NAME/hdfeos_extractor/metadata.txt)."
+          Los cambios de esta version estan en \`changelog\` dentro de
+          [metadata.txt](https://github.com/csoto666/qgis-hdfeos-extractor/blob/$TAG/hdfeos_extractor/metadata.txt).
+          TXT
+          )
+          # Si el Release ya existe -por ejemplo creado desde la web- se le
+          # adjunta el ZIP en vez de fallar. El objetivo es que el archivo
+          # correcto quede publicado, no quien lo creo primero.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "el Release $TAG ya existe; adjunto el ZIP"
+            gh release upload "$TAG" hdfeos_extractor-*.zip --clobber
+          else
+            gh release create "$TAG" hdfeos_extractor-*.zip \
+              --title "$TAG" --notes "$NOTAS"
+          fi
