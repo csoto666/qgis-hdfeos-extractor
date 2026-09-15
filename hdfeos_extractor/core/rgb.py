@@ -172,19 +172,31 @@ class RGBComposer(object):
 
     # -- composicion --------------------------------------------------------
     def create_composite(self, cube, as_uint8=True, preview=False,
-                         max_lado=1024):
+                         max_lado=1024, ventana=None):
         """Devuelve la imagen RGB como ``(y, x, 3)``.
 
         Con ``preview=True`` compone sobre bandas submuestreadas: la imagen
         sale en un instante y sirve para navegar. La extraccion de espectros
         no pasa por aca, asi que el analisis sigue sobre el dato original.
+
+        ``ventana`` -(x0, y0, x1, y1), extremos incluidos- recorta antes de
+        realzar, y ese orden es el que importa. Una escena en geometria de
+        sensor viene rodeada de relleno y de ceros; con el realce calculado
+        sobre la escena entera, esos ceros estiran el rango y el terreno queda
+        aplastado en una franja de grises. Recortando primero, el realce solo
+        ve lo que se esta mirando.
         """
         canales = []
         for wl in (self.red, self.green, self.blue):
             if preview:
-                banda, _ = cube.preview_band(wavelength=wl, max_lado=max_lado)
+                banda, paso = cube.preview_band(wavelength=wl,
+                                                max_lado=max_lado)
             else:
-                banda = cube.get_band(wavelength=wl)
+                banda, paso = cube.get_band(wavelength=wl), 1
+            if ventana is not None:
+                x0, y0, x1, y1 = ventana
+                banda = banda[y0 // paso:y1 // paso + 1,
+                              x0 // paso:x1 // paso + 1]
             canales.append(estirar(banda, self.modo, self.percentiles))
 
         rgb = np.dstack(canales)

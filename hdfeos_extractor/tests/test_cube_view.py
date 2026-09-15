@@ -282,3 +282,172 @@ def test_la_banda_unica_comparte_el_rango_con_las_caras(vista):
     frente y otro en el costado, y el cubo dejaria de ser un cubo."""
     vista.set_banda_unica(3)
     assert vista._rango is not None
+
+
+# -- zoom ---------------------------------------------------------------------
+def test_sin_zoom_se_ve_la_escena_entera(vista, cubo):
+    assert vista.ventana() == (0, 0, cubo.samples - 1, cubo.lines - 1)
+    assert vista.ancho_visible() == cubo.samples
+    assert vista.alto_visible() == cubo.lines
+
+
+def test_acercarse_recorta_la_ventana(vista):
+    vista.set_vista((10, 5, 30, 20))
+    assert vista.ventana() == (10, 5, 30, 20)
+    assert vista.ancho_visible() == 21 and vista.alto_visible() == 16
+
+
+def test_la_ventana_se_recorta_a_la_escena(vista, cubo):
+    vista.set_vista((-50, -50, 9999, 9999))
+    assert vista.ventana() == (0, 0, cubo.samples - 1, cubo.lines - 1)
+
+
+def test_un_rectangulo_diminuto_no_es_un_zoom(vista):
+    """Es un clic con temblor. Aceptarlo dejaria la vista inservible."""
+    antes = vista.ventana()
+    vista.set_vista((10, 10, 10, 10))
+    assert vista.ventana() == antes
+
+
+def test_las_caras_se_recortan_a_la_ventana(vista):
+    """Si no, al acercarse seguirian mostrando la fila y la columna enteras y
+    no coincidirian con el frente."""
+    vista.set_vista((10, 5, 30, 20))
+    assert vista._superior.width() == 21          # columnas visibles
+    assert vista._derecha.width() == 16           # filas visibles
+
+
+def test_acercarse_recalcula_el_rango_de_color():
+    """Es lo que se busca al acercarse: una escena rodeada de ceros tiene el
+    realce estirado por ellos, y el terreno queda aplastado."""
+    from hdfeos_extractor.core.cube import HyperspectralCube
+    datos = np.zeros((40, 40, 6), dtype=np.float32)
+    datos[10:20, 10:20, :] = 0.3                  # el terreno, en una esquina
+    c = HyperspectralCube.from_array(datos, np.linspace(450, 900, 6))
+    v = CubeView()
+    v.resize(400, 300)
+    v.set_cube(c, RGBComposer(900.0, 700.0, 450.0))
+    assert v._rango[0] == pytest.approx(0.0)      # los ceros mandan
+    v.set_vista((10, 10, 19, 19))
+    assert v._rango[0] > 0.0                      # ya no
+
+
+def test_ajustar_a_los_datos_deja_fuera_el_relleno():
+    from hdfeos_extractor.core.cube import HyperspectralCube
+    datos = np.zeros((40, 50, 6), dtype=np.float32)
+    datos[12:25, 20:35, :] = 0.4
+    c = HyperspectralCube.from_array(datos, np.linspace(450, 900, 6))
+    v = CubeView()
+    v.resize(400, 300)
+    v.set_cube(c, RGBComposer(900.0, 700.0, 450.0))
+    v.zoom_a_los_datos(margen=0)
+    x0, y0, x1, y1 = v.ventana()
+    assert x0 <= 20 and x1 >= 34
+    assert y0 <= 12 and y1 >= 24
+    assert (x1 - x0 + 1) < c.samples and (y1 - y0 + 1) < c.lines
+
+
+def test_la_cruz_se_queda_dentro_de_la_ventana(vista):
+    vista.set_posicion(2, 2)
+    vista.set_vista((20, 20, 40, 35))
+    x0, y0, x1, y1 = vista.ventana()
+    assert x0 <= vista.x <= x1 and y0 <= vista.y <= y1
+
+
+def test_un_clic_acierta_el_pixel_estando_acercado(vista):
+    from PyQt5.QtCore import QPointF
+    vista.set_vista((10, 5, 30, 20))
+    vista.render(_lienzo(vista))
+    origen, ancho, alto, _ = vista._geometria()
+    objetivo = (17, 9)
+    punto = QPointF(
+        origen.x() + (objetivo[0] - 10 + 0.5) / 21.0 * ancho,
+        origen.y() + (objetivo[1] - 5 + 0.5) / 16.0 * alto)
+    assert vista._pixel_en(punto) == objetivo
+
+
+# -- modos --------------------------------------------------------------------
+def test_en_modo_x_solo_se_mueve_la_columna(vista):
+    """Es lo que hace visible la diferencia entre los modos: en X se mueve la
+    vertical y cambia la cara derecha; en Y, la horizontal y la superior."""
+    vista.set_posicion(10, 10)
+    vista.set_modo("x")
+    recibidos = []
+    vista.transectoPedido.connect(lambda e, p: recibidos.append((e, p)))
+    vista._mover_a_pixel(25, 30)
+    assert (vista.x, vista.y) == (25, 10)         # la fila no se movio
+    assert recibidos == [("x", 25)]
+
+
+def test_en_modo_y_solo_se_mueve_la_fila(vista):
+    vista.set_posicion(10, 10)
+    vista.set_modo("y")
+    recibidos = []
+    vista.transectoPedido.connect(lambda e, p: recibidos.append((e, p)))
+    vista._mover_a_pixel(25, 30)
+    assert (vista.x, vista.y) == (10, 30)
+    assert recibidos == [("y", 30)]
+
+
+def test_en_modo_pixel_se_mueven_los_dos_ejes(vista):
+    vista.set_modo("pixel")
+    movidos = []
+    vista.posicionMovida.connect(lambda x, y: movidos.append((x, y)))
+    vista._mover_a_pixel(25, 30)
+    assert (vista.x, vista.y) == (25, 30)
+    assert movidos == [(25, 30)]
+
+
+def test_el_modo_multiple_acumula_pixeles(vista):
+    """Un solo espectro dice poco de una cubierta; lo que hace falta para
+    conocer su variabilidad es un conjunto."""
+    vista.set_modo("multi")
+    conjuntos = []
+    vista.pixelesElegidos.connect(conjuntos.append)
+    for pixel in ((3, 4), (10, 12), (20, 6)):
+        vista._empezar_gesto(pixel)
+    assert vista.seleccion == [(3, 4), (10, 12), (20, 6)]
+    assert len(conjuntos[-1]) == 3
+
+
+def test_cambiar_de_modo_limpia_la_seleccion(vista):
+    vista.set_modo("multi")
+    vista._empezar_gesto((1, 1))
+    assert vista.seleccion
+    vista.set_modo("pixel")
+    assert vista.seleccion == []
+
+
+def test_el_modo_area_emite_el_rectangulo(vista):
+    vista.set_modo("area")
+    areas = []
+    vista.areaElegida.connect(lambda *a: areas.append(a))
+    vista._empezar_gesto((5, 5))
+    vista._area = (5, 5, 15, 12)
+
+    class Suelta(object):
+        def button(self):
+            from PyQt5.QtCore import Qt
+            return Qt.LeftButton
+    vista.mouseReleaseEvent(Suelta())
+    assert areas == [(5, 5, 15, 12)]
+
+
+# -- barra de color -----------------------------------------------------------
+def test_la_barra_se_reserva_su_franja_solo_si_hay_rango(app, vista):
+    """Sin rango no hay nada que rotular, y reservar la franja igual dejaria
+    un hueco negro al costado."""
+    _, ancho_con, _, _ = vista._geometria()
+    v = CubeView()
+    v.resize(vista.width(), vista.height())
+    v.set_cube(vista.cube, None)
+    v._rango = None
+    ancho_sin = v._geometria()[1]
+    assert ancho_sin > ancho_con
+
+
+def test_la_barra_se_pinta_con_el_rango_vigente(vista):
+    assert vista._rango is not None
+    vista.render(_lienzo(vista))       # pinta la barra sin reventar
+    vista.set_paleta("viridis")
+    vista.render(_lienzo(vista))

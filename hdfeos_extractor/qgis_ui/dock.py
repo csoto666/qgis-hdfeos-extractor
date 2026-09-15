@@ -163,7 +163,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
                 (map_tools.MODO_Y, "Linea Y",
                  "Recorre filas: fija y y resume toda la fila"),
                 (map_tools.MODO_AREA, "Area",
-                 "Arrastra un rectangulo y promedia su espectro")):
+                 "Arrastra un rectangulo y promedia su espectro"),
+                (map_tools.MODO_MULTI, "Pixeles",
+                 "Cada clic suma un pixel al conjunto.\n"
+                 "La firma sale del promedio, con su variabilidad.")):
             boton = QtWidgets.QRadioButton(texto)
             boton.setToolTip(ayuda)
             fila.addWidget(boton)
@@ -173,41 +176,62 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         return fila
 
     def _bloque_rgb(self):
-        grupo = QtWidgets.QGroupBox("Composicion RGB")
-        rejilla = QtWidgets.QGridLayout(grupo)
-        rejilla.setVerticalSpacing(3)
+        """Composicion en una sola fila; los tres deslizadores, escondidos.
+
+        Ocupaba 176 pixeles de alto permanentes -mas que la vista del cubo en
+        un panel acoplado al costado- para algo que casi siempre se resuelve
+        eligiendo un preset. Las bandas exactas siguen a la vista en el
+        rotulo, y quien necesite moverlas abre la fila.
+        """
+        grupo = QtWidgets.QGroupBox("Composicion")
+        grupo.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
+                            QtWidgets.QSizePolicy.Maximum)
+        columna = QtWidgets.QVBoxLayout(grupo)
+        columna.setSpacing(3)
 
         fila = QtWidgets.QHBoxLayout()
-        fila.addWidget(QtWidgets.QLabel("Preset:"))
         self.combo_preset = QtWidgets.QComboBox()
         self.combo_preset.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                                         QtWidgets.QSizePolicy.Preferred)
-        fila.addWidget(self.combo_preset, 1)
-        fila.addWidget(QtWidgets.QLabel("Realce:"))
+        fila.addWidget(self.combo_preset, 2)
         self.combo_realce = QtWidgets.QComboBox()
         for modo in MODOS:
             self.combo_realce.addItem(ETIQUETAS_REALCE.get(modo, modo), modo)
-        fila.addWidget(self.combo_realce, 1)
-        rejilla.addLayout(fila, 0, 0, 1, 4)
+        self.combo_realce.setToolTip("Realce de la imagen")
+        fila.addWidget(self.combo_realce, 2)
+        self.boton_bandas_rgb = QtWidgets.QToolButton()
+        self.boton_bandas_rgb.setText("R G B")
+        self.boton_bandas_rgb.setCheckable(True)
+        self.boton_bandas_rgb.setToolTip("Elegir las bandas una por una")
+        fila.addWidget(self.boton_bandas_rgb)
+        self.resumen_rgb = QtWidgets.QLabel("-")
+        self.resumen_rgb.setToolTip("Bandas que alimentan la imagen")
+        fila.addWidget(self.resumen_rgb)
+        columna.addLayout(fila)
 
+        self.panel_rgb = QtWidgets.QWidget()
+        rejilla = QtWidgets.QGridLayout(self.panel_rgb)
+        rejilla.setContentsMargins(0, 0, 0, 0)
+        rejilla.setVerticalSpacing(2)
         self.controles_banda = {}
-        for fila, (canal, etiqueta) in enumerate(
-                (("red", "R"), ("green", "G"), ("blue", "B")), start=1):
+        for fila_n, (canal, etiqueta) in enumerate(
+                (("red", "R"), ("green", "G"), ("blue", "B"))):
             deslizador = QtWidgets.QSlider(Qt.Horizontal)
             deslizador.setMinimum(0)
             numero = QtWidgets.QSpinBox()
             numero.setMinimum(0)
             numero.setToolTip("Numero de banda")
             leyenda = QtWidgets.QLabel("-")
-            leyenda.setMinimumWidth(74)
+            leyenda.setMinimumWidth(70)
             leyenda.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            rejilla.addWidget(QtWidgets.QLabel(etiqueta), fila, 0)
-            rejilla.addWidget(deslizador, fila, 1)
-            rejilla.addWidget(numero, fila, 2)
-            rejilla.addWidget(leyenda, fila, 3)
+            rejilla.addWidget(QtWidgets.QLabel(etiqueta), fila_n, 0)
+            rejilla.addWidget(deslizador, fila_n, 1)
+            rejilla.addWidget(numero, fila_n, 2)
+            rejilla.addWidget(leyenda, fila_n, 3)
             self.controles_banda[canal] = (deslizador, numero, leyenda)
-
         rejilla.setColumnStretch(1, 1)
+        self.panel_rgb.setVisible(False)
+        columna.addWidget(self.panel_rgb)
         return grupo
 
     def _bloque_cubo(self):
@@ -216,7 +240,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         caja.setContentsMargins(3, 3, 3, 3)
         self.cubo = CubeView()
         self.cubo.setToolTip(
-            "Arrastre sobre la imagen para recorrer el cubo.\n"
+            "Boton izquierdo: lo que diga el modo de navegacion.\n"
+            "Boton derecho arrastrando: acercar a ese rectangulo.\n"
+            "Boton derecho sin arrastrar, o rueda: alejar.\n"
             "Clic en un costado: esa banda pasa al frente.\n"
             "Doble clic en el frente: vuelve a la composicion RGB.")
         caja.addWidget(self.cubo, 1)
@@ -231,6 +257,12 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.boton_rgb.setToolTip(
             "Deja de mostrar una sola banda en la cara frontal")
         fila.addWidget(self.boton_rgb)
+        self.boton_datos = QtWidgets.QPushButton("Ajustar a los datos")
+        self.boton_datos.setToolTip(
+            "Encuadra lo que tiene dato y deja fuera el relleno y los ceros")
+        fila.addWidget(self.boton_datos)
+        self.boton_todo = QtWidgets.QPushButton("Ver todo")
+        fila.addWidget(self.boton_todo)
         fila.addStretch(1)
         self.banda_frontal = QtWidgets.QLabel("frente: composicion RGB")
         fila.addWidget(self.banda_frontal)
@@ -336,14 +368,20 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             fila.addWidget(b)
         caja.addLayout(fila)
 
-        fila2 = QtWidgets.QHBoxLayout()
-        self.boton_abrir_lib = QtWidgets.QPushButton("Abrir biblioteca")
-        self.boton_guardar_lib = QtWidgets.QPushButton("Guardar biblioteca")
-        self.boton_csv = QtWidgets.QPushButton("Exportar CSV")
-        for b in (self.boton_abrir_lib, self.boton_guardar_lib,
-                  self.boton_csv):
-            fila2.addWidget(b)
-        caja.addLayout(fila2)
+        # Abrir, guardar y exportar van en un menu y no en una segunda fila
+        # de botones: se usan una vez por sesion y esa fila le quitaba alto
+        # permanente a las dos vistas.
+        self.menu_lib = QtWidgets.QMenu(self)
+        self.accion_abrir_lib = self.menu_lib.addAction("Abrir biblioteca...")
+        self.accion_guardar_lib = self.menu_lib.addAction(
+            "Guardar biblioteca...")
+        self.accion_csv = self.menu_lib.addAction("Exportar CSV...")
+        self.boton_lib = QtWidgets.QToolButton()
+        self.boton_lib.setText("Archivo")
+        self.boton_lib.setMenu(self.menu_lib)
+        self.boton_lib.setPopupMode(
+            QtWidgets.QToolButton.InstantPopup)
+        fila.addWidget(self.boton_lib)
         return grupo
 
     # -- conexiones ---------------------------------------------------------
@@ -366,9 +404,6 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.boton_guardar.clicked.connect(self._guardar_firma)
         self.boton_renombrar.clicked.connect(self._renombrar_firma)
         self.boton_quitar.clicked.connect(self._quitar_firma)
-        self.boton_abrir_lib.clicked.connect(self._abrir_biblioteca)
-        self.boton_guardar_lib.clicked.connect(self._guardar_biblioteca)
-        self.boton_csv.clicked.connect(self._exportar_csv)
         self.lista.itemChanged.connect(self._visibilidad_cambiada)
 
         # El cubo y el mapa son dos maneras de senalar el mismo pixel, asi
@@ -378,6 +413,19 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.cubo.posicionMovida.connect(self.controller.on_pixel_changed)
         self.cubo.pixelElegido.connect(self.controller.on_pixel_changed)
         self.cubo.longitudElegida.connect(self._banda_del_cubo)
+        # El cubo ofrece los mismos cuatro modos que el mapa. Hace falta: con
+        # un HDF-EOS5 abierto no hay capa en el mapa, asi que la herramienta
+        # de mapa no tiene donde actuar y los modos parecen no hacer nada.
+        self.cubo.transectoPedido.connect(self._linea_movida)
+        self.cubo.areaElegida.connect(self.controller.on_area_selected)
+        self.cubo.pixelesElegidos.connect(self._pixeles_elegidos)
+        self.cubo.vistaCambiada.connect(self._vista_cambiada)
+        self.boton_datos.clicked.connect(self.cubo.zoom_a_los_datos)
+        self.boton_todo.clicked.connect(lambda: self.cubo.set_vista(None))
+        self.boton_bandas_rgb.toggled.connect(self.panel_rgb.setVisible)
+        self.accion_abrir_lib.triggered.connect(self._abrir_biblioteca)
+        self.accion_guardar_lib.triggered.connect(self._guardar_biblioteca)
+        self.accion_csv.triggered.connect(self._exportar_csv)
         self.combo_paleta.currentTextChanged.connect(self.cubo.set_paleta)
         self.boton_rgb.clicked.connect(self._volver_al_rgb)
 
@@ -534,9 +582,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
     def _habilitar(self, activo):
         for w in (self.combo_preset, self.combo_realce, self.lista,
                   self.boton_guardar, self.boton_renombrar, self.boton_quitar,
-                  self.boton_csv, self.boton_guardar_lib,
-                  self.combo_paleta, self.boton_rgb,
-                  self.campo_rangos, self.boton_bandas):
+                  self.combo_paleta, self.boton_rgb, self.boton_lib,
+                  self.campo_rangos, self.boton_bandas,
+                  self.boton_bandas_rgb, self.boton_datos, self.boton_todo):
             w.setEnabled(activo)
         for casilla in self.casillas_bandas.values():
             casilla.setEnabled(activo)
@@ -565,6 +613,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             self.herramienta.lineaMovida.connect(self._linea_movida)
             self.herramienta.areaElegida.connect(
                 self.controller.on_area_selected)
+            self.herramienta.pixelesElegidos.connect(self._pixeles_elegidos)
             self.herramienta.fueraDeLaImagen.connect(
                 lambda: self.lectura.setText("fuera de la imagen"))
         self.canvas.setMapTool(self.herramienta)
@@ -579,6 +628,27 @@ class HyperspectralDock(QtWidgets.QDockWidget):
     def _cambiar_modo(self, clave):
         if self.herramienta is not None:
             self.herramienta.set_modo(clave)
+        self.cubo.set_modo(clave)
+
+    def _pixeles_elegidos(self, coords):
+        """Llego un conjunto de pixeles sueltos desde el cubo."""
+        if not coords:
+            return
+        firma = self.controller.on_pixels_selected(coords)
+        if firma is not None:
+            self.estado.setText(
+                "%d pixeles elegidos - la firma es su promedio, y la "
+                "envolvente su variabilidad" % len(coords))
+
+    def _vista_cambiada(self, vista):
+        if vista is None:
+            self.estado.setText("Vista completa")
+            return
+        x0, y0, x1, y1 = vista
+        self.estado.setText(
+            "Acercado a X %d-%d, Y %d-%d (%d x %d pixeles). El realce y la "
+            "escala de color se recalcularon sobre esta zona."
+            % (x0, x1, y0, y1, x1 - x0 + 1, y1 - y0 + 1))
 
     def _linea_movida(self, eje, posicion):
         if eje == map_tools.MODO_X:
@@ -629,6 +699,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             leyenda.setText("%.1f %s" % (cubo.wavelengths[indice],
                                          cubo.unidad_espectral))
         self._bloqueado = False
+        self.resumen_rgb.setText("%.0f/%.0f/%.0f %s" % (
+            cubo.wavelengths[indices[0]], cubo.wavelengths[indices[1]],
+            cubo.wavelengths[indices[2]], cubo.unidad_espectral))
         self.grafico.set_marcadores_rgb(self.controller.marcadores_rgb())
 
     def _aplicar_composicion(self, composer):

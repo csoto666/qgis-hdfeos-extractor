@@ -39,10 +39,12 @@ de lo que trae QGIS.
 
 import numpy as np
 
-from ..core.colormap import PALETA_POR_DEFECTO, colorear
+from ..core.colormap import PALETA_POR_DEFECTO, colorear, tabla
 from ..core.rgb import limites
 from .qt import QtCore, QtGui, QtWidgets, Qt, enum, pyqtSignal
 
+BOTON_IZQUIERDO = enum(Qt, "MouseButton", "LeftButton")
+BOTON_DERECHO = enum(Qt, "MouseButton", "RightButton")
 ANTIALIAS = enum(QtGui.QPainter, "RenderHint", "Antialiasing")
 INTERPOLAR = enum(QtGui.QPainter, "RenderHint", "SmoothPixmapTransform")
 FORMATO_RGB = enum(QtGui.QImage, "Format", "Format_RGB888")
@@ -63,10 +65,22 @@ LADO_MAXIMO = 1400
 #: repartidos dan un realce estable sin leer la escena entera al abrir.
 MUESTRAS_DE_RANGO = 5
 
+#: Modos de navegacion. Viven aca y no en la herramienta de mapa porque esta
+#: vista no depende de QGIS y la herramienta si: asi los dos usan los mismos.
+MODO_PIXEL, MODO_X, MODO_Y, MODO_AREA, MODO_MULTI = (
+    "pixel", "x", "y", "area", "multi")
+
+#: Ancho reservado a la derecha para la barra de color, en pixeles.
+ANCHO_BARRA = 62
+
 COLOR_CRUZ = QtGui.QColor(255, 60, 40)
 COLOR_ARISTA = QtGui.QColor(225, 225, 235)
 COLOR_MARCADORES = ("#ff4136", "#2ecc40", "#0074d9")   # R, G, B
 COLOR_FONDO = QtGui.QColor(16, 16, 20)
+COLOR_SELECCION = QtGui.QColor(255, 220, 0)
+COLOR_AREA = QtGui.QColor(0, 200, 255)
+COLOR_ZOOM = QtGui.QColor(255, 255, 255)
+COLOR_TEXTO = QtGui.QColor(225, 225, 235)
 
 
 def a_qimage(arreglo):
@@ -80,6 +94,17 @@ def a_qimage(arreglo):
     alto, ancho = datos.shape[:2]
     imagen = QtGui.QImage(datos.data, ancho, alto, 3 * ancho, FORMATO_RGB)
     return imagen.copy()
+
+
+def _corto(valor):
+    """Un numero corto para la barra: reflectancia con tres decimales,
+    cuentas con notacion cientifica."""
+    v = float(valor)
+    if abs(v) >= 1000 or (v != 0 and abs(v) < 0.001):
+        return "%.1e" % v
+    if abs(v) >= 10:
+        return "%.0f" % v
+    return ("%.3f" % v).rstrip("0").rstrip(".")
 
 
 def _decimar(plano, maximo=LADO_MAXIMO):
@@ -97,6 +122,14 @@ class CubeView(QtWidgets.QWidget):
     pixelElegido = pyqtSignal(int, int)
     #: Se hizo clic sobre una cara espectral, a esta longitud de onda.
     longitudElegida = pyqtSignal(float)
+    #: Cambio el rectangulo visible. None cuando se ve la escena entera.
+    vistaCambiada = pyqtSignal(object)
+    #: Se movio la linea de muestreo: (eje, posicion).
+    transectoPedido = pyqtSignal(str, int)
+    #: Se arrastro un rectangulo sobre la imagen: (x0, y0, x1, y1).
+    areaElegida = pyqtSignal(int, int, int, int)
+    #: Cambio el conjunto de pixeles sueltos elegidos: [(x, y), ...].
+    pixelesElegidos = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super(CubeView, self).__init__(parent)
@@ -110,13 +143,22 @@ class CubeView(QtWidgets.QWidget):
         self.paleta = PALETA_POR_DEFECTO
         self.x = 0
         self.y = 0
+        #: Rectangulo visible (x0, y0, x1, y1), extremos incluidos. None es
+        #: la escena entera.
+        self.vista = None
         self.banda_unica = None       # None = el frente es la composicion RGB
         self.marcadores = []          # longitudes de onda del RGB
+        self.modo = MODO_PIXEL
+        self.seleccion = []           # pixeles sueltos, en modo multi
+        self._area = None             # rectangulo en curso, en modo area
+        self._zoom = None             # rectangulo de zoom en curso
+        self._zoom_desde = None
 
         self._frontal = None          # QImage de la composicion
         self._superior = None         # QImage de la cara (x, banda)
         self._derecha = None          # QImage de la cara (y, banda)
         self._rango = None            # (lo, hi) del color, fijo para el cubo
+        self.unidad = "reflectancia"  # rotulo de la barra de color
         self._cuadros = {}            # nombre -> QPolygonF, para acertar clics
         self._transformadas = {}      # nombre -> QTransform de cada cara
         self._arrastrando = False
@@ -127,12 +169,99 @@ class CubeView(QtWidgets.QWidget):
         self.composer = composer
         self._frontal = self._superior = self._derecha = None
         self._rango = None
+        self.vista = None
         if cube is not None:
             self.x = cube.samples // 2
             self.y = cube.lines // 2
             self.recalcular_rango()
             self.refrescar_frontal()
             self._recalcular_caras()
+        self.update()
+
+    # -- zoom ---------------------------------------------------------------
+    def ventana(self):
+        """(x0, y0, x1, y1) visible, recortado a la escena. Extremos dentro."""
+        if self.cube is None:
+            return (0, 0, 0, 0)
+        if self.vista is None:
+            return (0, 0, self.cube.samples - 1, self.cube.lines - 1)
+        x0, y0, x1, y1 = self.vista
+        return (max(0, x0), max(0, y0),
+                min(self.cube.samples - 1, x1), min(self.cube.lines - 1, y1))
+
+    def ancho_visible(self):
+        x0, _, x1, _ = self.ventana()
+        return x1 - x0 + 1
+
+    def alto_visible(self):
+        _, y0, _, y1 = self.ventana()
+        return y1 - y0 + 1
+
+    def set_vista(self, rect):
+        """Acerca a un rectangulo de la escena, o vuelve a todo con None.
+
+        Rehace tambien el rango de color, y es lo que el usuario esta
+        buscando al acercarse: una escena en geometria de sensor viene rodeada
+        de relleno y de ceros, y con el realce calculado sobre la escena
+        entera el terreno queda aplastado. Al acercarse, el realce solo ve lo
+        que quedo dentro.
+        """
+        if self.cube is None:
+            return
+        if rect is not None:
+            x0, y0, x1, y1 = rect
+            x0, x1 = sorted((int(x0), int(x1)))
+            y0, y1 = sorted((int(y0), int(y1)))
+            # Menos de dos pixeles de lado no es un zoom, es un clic con
+            # temblor: se ignora en vez de dejar la vista inservible.
+            if x1 - x0 < 1 or y1 - y0 < 1:
+                return
+            rect = (max(0, x0), max(0, y0),
+                    min(self.cube.samples - 1, x1),
+                    min(self.cube.lines - 1, y1))
+        self.vista = rect
+        x0, y0, x1, y1 = self.ventana()
+        self.x = int(np.clip(self.x, x0, x1))
+        self.y = int(np.clip(self.y, y0, y1))
+        self.recalcular_rango()
+        self.refrescar_frontal()
+        self._recalcular_caras()
+        self.vistaCambiada.emit(self.vista)
+        self.update()
+
+    def zoom_a_los_datos(self, margen=2):
+        """Encuadra lo que tiene dato, dejando fuera el relleno y los ceros.
+
+        Es el gesto que se quiere apenas se abre una escena sin ortorectificar:
+        el cubo llega dentro de un rectangulo mucho mas grande que la franja
+        que el sensor recorrio, y el resto es relleno.
+        """
+        if not self._utilizable():
+            return
+        banda, paso = self.cube.preview_band(index=self.cube.bands // 2,
+                                             max_lado=LADO_MAXIMO)
+        util = np.isfinite(banda) & (banda != 0)
+        if not util.any():
+            self.set_vista(None)
+            return
+        filas = np.flatnonzero(util.any(axis=1))
+        columnas = np.flatnonzero(util.any(axis=0))
+        self.set_vista((columnas[0] * paso - margen, filas[0] * paso - margen,
+                        columnas[-1] * paso + margen,
+                        filas[-1] * paso + margen))
+
+    def set_modo(self, modo):
+        """Cambia que hace el boton izquierdo sobre la cara frontal."""
+        self.modo = modo
+        self._area = None
+        if modo != MODO_MULTI:
+            self.limpiar_seleccion()
+        self.update()
+
+    def limpiar_seleccion(self):
+        if self.seleccion:
+            self.seleccion = []
+            self.pixelesElegidos.emit([])
         self.update()
 
     def set_paleta(self, nombre):
@@ -185,16 +314,20 @@ class CubeView(QtWidgets.QWidget):
         if not self._utilizable():
             self._frontal = None
             return
+        x0, y0, x1, y1 = self.ventana()
         if self.banda_unica is not None:
-            banda, _ = self.cube.preview_band(index=self.banda_unica,
-                                              max_lado=LADO_MAXIMO)
+            banda, paso = self.cube.preview_band(index=self.banda_unica,
+                                                 max_lado=LADO_MAXIMO)
+            banda = banda[y0 // paso:y1 // paso + 1,
+                          x0 // paso:x1 // paso + 1]
             if self._rango is None:
                 self.recalcular_rango()
             lo, hi = self._rango if self._rango else (None, None)
             self._frontal = a_qimage(colorear(banda, self.paleta, lo, hi))
         elif self.composer is not None:
-            rgb = self.composer.create_composite(self.cube, preview=True,
-                                                 max_lado=LADO_MAXIMO)
+            rgb = self.composer.create_composite(
+                self.cube, preview=True, max_lado=LADO_MAXIMO,
+                ventana=(x0, y0, x1, y1))
             self._frontal = a_qimage(rgb)
         self.update()
 
@@ -202,8 +335,9 @@ class CubeView(QtWidgets.QWidget):
         """Mueve la cruz. Es lo que hace que las caras recorran el cubo."""
         if not self._utilizable():
             return
-        x = int(np.clip(x, 0, self.cube.samples - 1))
-        y = int(np.clip(y, 0, self.cube.lines - 1))
+        vx0, vy0, vx1, vy1 = self.ventana()
+        x = int(np.clip(x, vx0, vx1))
+        y = int(np.clip(y, vy0, vy1))
         if (x, y) == (self.x, self.y) and self._superior is not None:
             return
         self.x, self.y = x, y
@@ -232,11 +366,13 @@ class CubeView(QtWidgets.QWidget):
             self._rango = None
             return
         modo = self.composer.modo if self.composer is not None else "percentil"
-        cuantas = min(MUESTRAS_DE_RANGO, self.cube.lines)
-        filas = np.linspace(0, self.cube.lines - 1, cuantas).astype(int)
+        x0, y0, x1, y1 = self.ventana()
+        cuantas = min(MUESTRAS_DE_RANGO, y1 - y0 + 1)
+        filas = np.linspace(y0, y1, cuantas).astype(int)
         try:
             muestra = np.concatenate(
-                [self.cube.get_transect("y", int(f)).ravel() for f in filas])
+                [self.cube.get_transect("y", int(f))[x0:x1 + 1].ravel()
+                 for f in filas])
         except Exception:
             self._rango = None
             return
@@ -247,9 +383,13 @@ class CubeView(QtWidgets.QWidget):
         if not self._utilizable():
             self._superior = self._derecha = None
             return
+        x0, y0, x1, y1 = self.ventana()
         try:
-            arriba = self.cube.get_transect("y", self.y)      # (x, banda)
-            derecha = self.cube.get_transect("x", self.x)     # (y, banda)
+            # Recortadas a la ventana: si no, al acercarse las caras seguirian
+            # mostrando toda la fila y la columna, y no coincidirian con el
+            # frente.
+            arriba = self.cube.get_transect("y", self.y)[x0:x1 + 1]
+            derecha = self.cube.get_transect("x", self.x)[y0:y1 + 1]
         except Exception:
             self._superior = self._derecha = None
             return
@@ -275,10 +415,11 @@ class CubeView(QtWidgets.QWidget):
         if not self._utilizable():
             return None
         margen = 10.0
-        disponible_w = max(1.0, self.width() - 2 * margen)
+        reservado = ANCHO_BARRA if self._rango else 0.0
+        disponible_w = max(1.0, self.width() - 2 * margen - reservado)
         disponible_h = max(1.0, self.height() - 2 * margen)
-        cols = float(self.cube.samples)
-        filas = float(self.cube.lines)
+        cols = float(self.ancho_visible())
+        filas = float(self.alto_visible())
 
         # El contenido mide (s + PROFUNDIDAD*s) de ancho y
         # (l + INCLINACION*PROFUNDIDAD*s) de alto, en unidades de pixel de
@@ -342,8 +483,113 @@ class CubeView(QtWidgets.QWidget):
 
         self._pintar_aristas(p, A, B, C, d)
         self._pintar_marcadores(p, ancho, alto, d)
+        self._pintar_seleccion(p, A, ancho, alto)
         self._pintar_cruz(p, A, B, ancho, alto, d)
+        self._pintar_rectangulos(p)
+        self._pintar_barra_color(p)
         p.end()
+
+    def _pintar_barra_color(self, p):
+        """La escala del cubo, en las unidades del dato.
+
+        Sin ella el arcoiris de las caras es decorativo: se ve que una zona
+        es distinta de otra y no cuanto. Los extremos son los mismos que usa
+        el coloreado, asi que lo que dice la barra es lo que se esta viendo.
+        """
+        if not self._rango:
+            return
+        lo, hi = self._rango
+        alto = max(40.0, self.height() - 60.0)
+        arriba = (self.height() - alto) / 2.0
+        izquierda = self.width() - ANCHO_BARRA + 8.0
+        ancho = 14.0
+
+        # El degradado se arma con la misma tabla que pinta las caras.
+        lut = tabla(self.paleta)
+        gradiente = QtGui.QLinearGradient(0, arriba + alto, 0, arriba)
+        for i in range(0, lut.shape[0], 8):
+            t = i / float(lut.shape[0] - 1)
+            gradiente.setColorAt(t, QtGui.QColor(*[int(v) for v in lut[i]]))
+        gradiente.setColorAt(1.0, QtGui.QColor(*[int(v) for v in lut[-1]]))
+
+        caja = QtCore.QRectF(izquierda, arriba, ancho, alto)
+        p.setPen(QtGui.QPen(COLOR_ARISTA, 1))
+        p.setBrush(QtGui.QBrush(gradiente))
+        p.drawRect(caja)
+        p.setBrush(SIN_PINCEL)
+
+        fuente = p.font()
+        fuente.setPointSizeF(max(7.0, fuente.pointSizeF() - 1.5))
+        p.setFont(fuente)
+        p.setPen(COLOR_TEXTO)
+        izq = enum(Qt, "AlignmentFlag", "AlignLeft")
+        vcentro = enum(Qt, "AlignmentFlag", "AlignVCenter")
+        for t, valor in ((0.0, hi), (0.5, (lo + hi) / 2.0), (1.0, lo)):
+            y = arriba + t * alto
+            p.drawLine(QtCore.QPointF(izquierda + ancho, y),
+                       QtCore.QPointF(izquierda + ancho + 3, y))
+            p.drawText(QtCore.QRectF(izquierda + ancho + 5, y - 7,
+                                     ANCHO_BARRA - ancho - 12, 14),
+                       izq | vcentro, _corto(valor))
+        # El rotulo se acorta al ancho que de verdad queda hasta el borde.
+        # Con un rectangulo fijo, "reflectancia" se cortaba contra el canto
+        # del widget y quedaba "reflectanc".
+        disponible = max(20.0, self.width() - (izquierda - 4) - 4)
+        metrica = QtGui.QFontMetrics(p.font())
+        rotulo = metrica.elidedText(self.unidad or "valor",
+                                    enum(Qt, "TextElideMode", "ElideRight"),
+                                    int(disponible))
+        p.drawText(QtCore.QRectF(izquierda - 4, arriba - 16, disponible, 14),
+                   izq | vcentro, rotulo)
+
+    def _pintar_seleccion(self, p, A, ancho, alto):
+        """Los pixeles sueltos ya elegidos, en modo multiple."""
+        if not self.seleccion:
+            return
+        vx0, vy0, vx1, vy1 = self.ventana()
+        cols, filas = self.ancho_visible(), self.alto_visible()
+        p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 170), 3))
+        p.setBrush(COLOR_SELECCION)
+        for x, y in self.seleccion:
+            if not (vx0 <= x <= vx1 and vy0 <= y <= vy1):
+                continue
+            px = A.x() + (x - vx0 + 0.5) / cols * ancho
+            py = A.y() + (y - vy0 + 0.5) / filas * alto
+            p.drawEllipse(QtCore.QPointF(px, py), 3.2, 3.2)
+        p.setBrush(SIN_PINCEL)
+
+    def _pintar_rectangulos(self, p):
+        """El area o el zoom que se estan arrastrando ahora."""
+        for rect, color, punteado in ((self._area, COLOR_AREA, False),
+                                      (self._zoom, COLOR_ZOOM, True)):
+            if rect is None:
+                continue
+            p.setPen(QtGui.QPen(color, 1.4,
+                                LINEA_PUNTEADA if punteado else
+                                enum(Qt, "PenStyle", "SolidLine")))
+            relleno = QtGui.QColor(color)
+            relleno.setAlpha(40)
+            p.setBrush(relleno)
+            p.drawRect(self._rect_pantalla(rect))
+        p.setBrush(SIN_PINCEL)
+
+    def _rect_pantalla(self, rect):
+        """Un rectangulo en pixeles de escena, llevado a la pantalla."""
+        geometria = self._geometria()
+        if geometria is None:
+            return QtCore.QRectF()
+        A, ancho, alto, _ = geometria
+        vx0, vy0, _, _ = self.ventana()
+        cols, filas = self.ancho_visible(), self.alto_visible()
+        x0, y0, x1, y1 = rect
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        izq = A.x() + (x0 - vx0) / float(cols) * ancho
+        der = A.x() + (x1 - vx0 + 1) / float(cols) * ancho
+        sup = A.y() + (y0 - vy0) / float(filas) * alto
+        inf = A.y() + (y1 - vy0 + 1) / float(filas) * alto
+        return QtCore.QRectF(izq, sup, max(1.0, der - izq),
+                             max(1.0, inf - sup))
 
     def _pintar_cara(self, p, nombre, imagen, origen, borde, d):
         if imagen is None:
@@ -416,9 +662,10 @@ class CubeView(QtWidgets.QWidget):
         Las prolongaciones importan: son las que dicen que la cara superior es
         el corte que pasa por esta fila y no el borde de la escena.
         """
-        cols, filas = self.cube.samples, self.cube.lines
-        px = A.x() + (self.x + 0.5) / cols * ancho
-        py = A.y() + (self.y + 0.5) / filas * alto
+        vx0, vy0, _, _ = self.ventana()
+        cols, filas = self.ancho_visible(), self.alto_visible()
+        px = A.x() + (self.x - vx0 + 0.5) / cols * ancho
+        py = A.y() + (self.y - vy0 + 0.5) / filas * alto
 
         p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 150), 3))
         self._trazar_cruz(p, A, B, px, py, alto, d)
@@ -443,27 +690,127 @@ class CubeView(QtWidgets.QWidget):
         pos = evento.position() if hasattr(evento, "position") else evento.pos()
         return QtCore.QPointF(pos.x(), pos.y())
 
+    def _pixel_en(self, punto):
+        """Punto de pantalla -> (x, y) de la escena, o None si cae fuera."""
+        geometria = self._geometria()
+        if geometria is None or not self._en_cara("frontal", punto):
+            return None
+        A, ancho, alto, _ = geometria
+        vx0, vy0, vx1, vy1 = self.ventana()
+        x = vx0 + int((punto.x() - A.x()) / ancho * self.ancho_visible())
+        y = vy0 + int((punto.y() - A.y()) / alto * self.alto_visible())
+        return (int(np.clip(x, vx0, vx1)), int(np.clip(y, vy0, vy1)))
+
     def mousePressEvent(self, evento):
-        if self.cube is None:
+        if not self._utilizable():
             return
         punto = self._posicion(evento)
-        if self._en_cara("frontal", punto):
-            self._arrastrando = True
-            self._mover_a(punto)
+        if evento.button() == BOTON_DERECHO:
+            # El boton derecho es siempre el zoom, en cualquier modo: asi el
+            # izquierdo queda entero para lo que el modo diga, y acercarse no
+            # obliga a cambiar de modo y volver.
+            pixel = self._pixel_en(punto)
+            self._zoom = None if pixel is None else (pixel + pixel)
+            self._zoom_desde = pixel
+            return
+        if evento.button() != BOTON_IZQUIERDO:
+            return
+
+        pixel = self._pixel_en(punto)
+        if pixel is not None:
+            self._empezar_gesto(pixel)
             return
         for nombre in ("superior", "derecha"):
             if self._en_cara(nombre, punto):
                 self._elegir_longitud(nombre, punto)
                 return
 
+    def _empezar_gesto(self, pixel):
+        x, y = pixel
+        if self.modo == MODO_MULTI:
+            # Cada clic suma un pixel. Un solo espectro dice poco de una
+            # cubierta: lo que hace falta para conocer su variabilidad es un
+            # conjunto.
+            self.seleccion.append((x, y))
+            self.pixelesElegidos.emit(list(self.seleccion))
+            self.update()
+            return
+        if self.modo == MODO_AREA:
+            self._area = (x, y, x, y)
+            self._arrastrando = True
+            self.update()
+            return
+        self._arrastrando = True
+        self._mover_a_pixel(x, y)
+
     def mouseMoveEvent(self, evento):
-        if self._arrastrando:
-            self._mover_a(self._posicion(evento))
+        punto = self._posicion(evento)
+        if self._zoom is not None and self._zoom_desde is not None:
+            pixel = self._pixel_en(punto)
+            if pixel is not None:
+                self._zoom = self._zoom_desde + pixel
+                self.update()
+            return
+        if not self._arrastrando:
+            return
+        pixel = self._pixel_en(punto)
+        if pixel is None:
+            return
+        if self.modo == MODO_AREA and self._area is not None:
+            self._area = self._area[:2] + pixel
+            self.update()
+            return
+        self._mover_a_pixel(*pixel)
 
     def mouseReleaseEvent(self, evento):
-        if self._arrastrando:
-            self._arrastrando = False
-            self.pixelElegido.emit(self.x, self.y)
+        if evento.button() == BOTON_DERECHO:
+            zona, self._zoom, self._zoom_desde = self._zoom, None, None
+            if zona is None:
+                return
+            x0, y0, x1, y1 = zona
+            if abs(x1 - x0) < 2 and abs(y1 - y0) < 2:
+                self.set_vista(None)      # clic derecho seco: ver todo
+            else:
+                self.set_vista(zona)
+            return
+        if not self._arrastrando:
+            return
+        self._arrastrando = False
+        if self.modo == MODO_AREA and self._area is not None:
+            x0, y0, x1, y1 = self._area
+            self._area = None
+            self.update()
+            if abs(x1 - x0) >= 1 or abs(y1 - y0) >= 1:
+                self.areaElegida.emit(x0, y0, x1, y1)
+            else:
+                self.pixelElegido.emit(x0, y0)
+            return
+        if self.modo in (MODO_X, MODO_Y):
+            eje = "x" if self.modo == MODO_X else "y"
+            self.transectoPedido.emit(eje, self.x if eje == "x" else self.y)
+            return
+        self.pixelElegido.emit(self.x, self.y)
+
+    def wheelEvent(self, evento):
+        """Rueda: acerca y aleja alrededor del cursor."""
+        if not self._utilizable():
+            return
+        pixel = self._pixel_en(self._posicion(evento))
+        if pixel is None:
+            return
+        pasos = evento.angleDelta().y() / 120.0
+        if not pasos:
+            return
+        factor = 0.8 ** pasos
+        x0, y0, x1, y1 = self.ventana()
+        cx, cy = pixel
+        ancho = max(2.0, (x1 - x0 + 1) * factor)
+        alto = max(2.0, (y1 - y0 + 1) * factor)
+        if (ancho >= self.cube.samples and alto >= self.cube.lines):
+            self.set_vista(None)
+            return
+        self.set_vista((cx - ancho / 2.0, cy - alto / 2.0,
+                        cx + ancho / 2.0, cy + alto / 2.0))
 
     def mouseDoubleClickEvent(self, evento):
         """Doble clic en el frente: vuelve a la composicion RGB.
@@ -480,15 +827,32 @@ class CubeView(QtWidgets.QWidget):
             punto, enum(Qt, "FillRule", "OddEvenFill"))
 
     def _mover_a(self, punto):
-        geometria = self._geometria()
-        if geometria is None:
-            return
-        A, ancho, alto, _ = geometria
-        x = int((punto.x() - A.x()) / ancho * self.cube.samples)
-        y = int((punto.y() - A.y()) / alto * self.cube.lines)
+        pixel = self._pixel_en(punto)
+        if pixel is not None:
+            self._mover_a_pixel(*pixel)
+
+    def _mover_a_pixel(self, x, y):
+        """Mueve la cruz respetando el modo.
+
+        En "linea X" solo cambia la columna y en "linea Y" solo la fila. Es
+        lo que hace visible la diferencia entre los modos: en X se mueve la
+        vertical y cambia la cara derecha; en Y, la horizontal y la superior.
+        Con los dos ejes moviendose a la vez los cuatro modos se sienten
+        iguales.
+        """
+        if self.modo == MODO_X:
+            y = self.y
+        elif self.modo == MODO_Y:
+            x = self.x
         antes = (self.x, self.y)
         self.set_posicion(x, y)
-        if (self.x, self.y) != antes:
+        if (self.x, self.y) == antes:
+            return
+        if self.modo == MODO_X:
+            self.transectoPedido.emit("x", self.x)
+        elif self.modo == MODO_Y:
+            self.transectoPedido.emit("y", self.y)
+        else:
             self.posicionMovida.emit(self.x, self.y)
 
     def _elegir_longitud(self, nombre, punto):

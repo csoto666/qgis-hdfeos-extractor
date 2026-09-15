@@ -39,7 +39,10 @@ from qgis.gui import QgsMapTool, QgsRubberBand
 
 from ..vista.qt import QtGui, Qt, pyqtSignal
 
-MODO_PIXEL, MODO_X, MODO_Y, MODO_AREA = "pixel", "x", "y", "area"
+# Los modos se definen en la vista del cubo, que no depende de QGIS, para que
+# el cubo y el mapa usen exactamente los mismos.
+from ..vista.cube_view import (MODO_AREA, MODO_MULTI, MODO_PIXEL,  # noqa: E402
+                               MODO_X, MODO_Y)
 
 COLOR_PIXEL = QtGui.QColor(255, 220, 0)
 COLOR_LINEA = QtGui.QColor(106, 81, 163)
@@ -58,6 +61,7 @@ class HerramientaExplorar(QgsMapTool):
     pixelElegido = pyqtSignal(int, int)
     lineaMovida = pyqtSignal(str, int)       # eje, posicion
     areaElegida = pyqtSignal(int, int, int, int)
+    pixelesElegidos = pyqtSignal(object)
     fueraDeLaImagen = pyqtSignal()
 
     def __init__(self, canvas, controller):
@@ -68,6 +72,7 @@ class HerramientaExplorar(QgsMapTool):
         self._ultimo_envio = 0.0
         self._ultima_posicion = None
         self._arrastre = None                # esquina inicial del rectangulo
+        self.seleccion = []                  # pixeles sueltos, en modo multi
 
         self.marca_pixel = self._banda(QgsWkbTypes.PolygonGeometry,
                                        COLOR_PIXEL, 2)
@@ -89,6 +94,8 @@ class HerramientaExplorar(QgsMapTool):
     # -- modo ---------------------------------------------------------------
     def set_modo(self, modo):
         self.modo = modo
+        if modo != MODO_MULTI:
+            self.seleccion = []
         self.limpiar_marcas(pixel=(modo != MODO_PIXEL))
         self.canvas.setCursor(QtGui.QCursor(
             Qt.CrossCursor if modo == MODO_PIXEL else Qt.SizeAllCursor))
@@ -175,7 +182,14 @@ class HerramientaExplorar(QgsMapTool):
             self._arrastre = None
             return
         x, y = pixel
-        if self.modo == MODO_PIXEL:
+        if self.modo == MODO_MULTI:
+            # Cada clic suma un pixel. Un solo espectro dice poco de una
+            # cubierta; lo que hace falta para conocer su variabilidad es un
+            # conjunto.
+            self.seleccion.append((x, y))
+            self.resaltar_pixel(x, y)
+            self.pixelesElegidos.emit(list(self.seleccion))
+        elif self.modo == MODO_PIXEL:
             self.resaltar_pixel(x, y)
             self.pixelElegido.emit(x, y)
         elif self.modo == MODO_AREA and self._arrastre is not None:

@@ -417,8 +417,10 @@ def test_los_tramos_descartados_se_sombrean_en_el_grafico(panel_ancho):
 def test_los_controles_arrancan_escondidos(panel_ancho):
     """Es un ajuste por escena, no algo que se toque todo el rato, y el alto
     del panel hace falta para las dos vistas."""
-    assert not panel_ancho.panel_bandas.isVisible()
+    assert panel_ancho.panel_bandas.isHidden()
     assert panel_ancho.cuenta_bandas.text() != "-"   # la cuenta si se ve
+    panel_ancho.boton_bandas.setChecked(True)
+    assert not panel_ancho.panel_bandas.isHidden()
 
 
 def test_desmarcar_vapor_de_agua_devuelve_esas_bandas(panel_ancho):
@@ -483,3 +485,59 @@ def test_cambiar_la_mascara_recalcula_la_firma_en_pantalla(panel_ancho):
     despues = panel_ancho.grafico._curvas[-1].y
     assert np.count_nonzero(np.isnan(despues)) < np.count_nonzero(
         np.isnan(antes))
+
+
+# -- modos, zoom y compactacion -----------------------------------------------
+def test_el_modo_llega_al_cubo_y_no_solo_al_mapa(panel):
+    """Con un HDF-EOS5 abierto no hay capa en el mapa, asi que la herramienta
+    de mapa no tiene donde actuar: si el modo no llegara tambien al cubo, los
+    cuatro modos pareceria que no hacen nada."""
+    from hdfeos_extractor.qgis_ui import map_tools
+    panel._activar_herramienta()
+    for modo in (map_tools.MODO_X, map_tools.MODO_Y, map_tools.MODO_AREA,
+                 map_tools.MODO_MULTI, map_tools.MODO_PIXEL):
+        panel._cambiar_modo(modo)
+        assert panel.herramienta.modo == modo
+        assert panel.cubo.modo == modo
+
+
+def test_un_conjunto_de_pixeles_da_una_firma_con_variabilidad(panel):
+    panel.cubo.set_modo("multi")
+    for pixel in ((1, 1), (2, 2), (3, 3)):
+        panel.cubo._empezar_gesto(pixel)
+    firma = panel.controller.firma_actual
+    assert firma is not None and firma.count == 3
+    assert firma.std is not None
+    assert "3 pixeles elegidos" in panel.estado.text()
+
+
+def test_acercarse_se_informa_en_la_barra_de_estado(panel):
+    panel.cubo.set_vista((1, 1, 3, 4))
+    assert "Acercado" in panel.estado.text()
+    panel.cubo.set_vista(None)
+    assert "Vista completa" in panel.estado.text()
+
+
+def test_los_deslizadores_rgb_arrancan_escondidos(panel):
+    """Ocupaban 176 pixeles permanentes para algo que casi siempre se
+    resuelve con un preset."""
+    # isHidden y no isVisible: isVisible es falso mientras el dock no este
+    # mostrado, asi que la comprobacion pasaria sola sin probar nada.
+    assert panel.panel_rgb.isHidden()
+    assert panel.resumen_rgb.text() != "-"        # las bandas si se ven
+    panel.boton_bandas_rgb.setChecked(True)
+    assert not panel.panel_rgb.isHidden()
+
+
+def test_el_resumen_rgb_sigue_a_las_bandas(panel):
+    panel._banda_cambiada("red", 8)
+    ultima = float(longitudes_patron()[-1])
+    assert ("%.0f" % ultima) in panel.resumen_rgb.text()
+
+
+def test_las_acciones_de_biblioteca_siguen_existiendo(panel):
+    """Pasaron de una fila de botones a un menu, pero tienen que seguir ahi."""
+    etiquetas = [a.text() for a in panel.menu_lib.actions()]
+    assert any("Abrir" in t for t in etiquetas)
+    assert any("Guardar" in t for t in etiquetas)
+    assert any("CSV" in t for t in etiquetas)
