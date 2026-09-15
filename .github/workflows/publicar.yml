@@ -26,8 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -57,17 +55,6 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Crear la etiqueta si no existe
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "la etiqueta $TAG ya existe"
-          else
-            git tag -a "$TAG" -m "HDF-EOS Explorer ${TAG#v}"
-            git push origin "$TAG"
-          fi
-
       - name: Armar el ZIP
         run: ./empaquetar.sh
 
@@ -95,6 +82,10 @@ jobs:
             echo "el Release $TAG ya existe; adjunto el ZIP"
             gh release upload "$TAG" hdfeos_extractor-*.zip --clobber
           else
+            # --target crea la etiqueta sobre este commit si no existe. Se
+            # deja que lo haga gh y no "git tag": el runner no tiene identidad
+            # de committer configurada y "git tag -a" falla con
+            # "empty ident name", que es como se cayo el primer intento.
             gh release create "$TAG" hdfeos_extractor-*.zip \
-              --title "$TAG" --notes "$NOTAS"
+              --target "$GITHUB_SHA" --title "$TAG" --notes "$NOTAS"
           fi
