@@ -12,6 +12,13 @@ class Senal(object):
         self.conectados.append(receptor)
 
     def disconnect(self, receptor):
+        # PyQt levanta TypeError al soltar algo que no estaba conectado, y
+        # el doble tiene que hacer lo mismo: soltar dos veces es normal
+        # -cerrar el panel y despues descargar el complemento- y si aqui
+        # saliera otra excepcion la prueba pasaria por un camino que en QGIS
+        # no existe.
+        if receptor not in self.conectados:
+            raise TypeError("ese receptor no estaba conectado")
         self.conectados.remove(receptor)
 
     def emit(self, *args):

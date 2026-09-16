@@ -177,7 +177,23 @@ van en el mismo panel, separados por un divisor que se arrastra. El reparto
 se **acuesta o se apila** según dónde esté acoplado el panel: al costado de
 QGIS, el cubo arriba y el espectro abajo; abajo o flotando, uno al lado del
 otro. Con dos pantallas, **Soltar aparte** manda el cubo a su propia ventana;
-cerrarla lo devuelve al panel.
+cerrarla lo devuelve al panel. Cerrar el panel entero esconde las dos y no
+pierde nada: al volver a abrirlo, el arreglo que elegiste está donde lo
+dejaste.
+
+Soltar el cubo **no lo convierte a él en una ventana**: lo muda a una ventana
+que ya existía, vacía hasta ese momento. La diferencia no se ve pero importa.
+Ponerle a un widget ya montado la bandera de ventana y quitársela después
+obliga a Qt a destruir y rehacer su ventana nativa con la interfaz en marcha,
+y eso colgaba QGIS en macOS: la pila del cuelgue termina en `QWidget::create`,
+llamado mientras la animación de acople recorre los hijos del panel para
+mostrarlos. Cambiar de padre, en cambio, es lo que Qt hace todo el rato —un
+divisor, una pestaña— y es la única operación pensada para hacerse en caliente.
+
+Por el mismo motivo, el panel **no hace ningún trabajo dentro de su
+`showEvent`**: ese método corre en mitad de la animación de acople de QGIS, y
+tocar el lienzo ahí es reentrar en lo que Qt está reacomodando. Lo que haya que
+rehacer al volver a mostrarlo se aplaza un giro del bucle de eventos.
 
 ## El zoom recalcula el realce
 

@@ -7,7 +7,8 @@ pytest.importorskip("PyQt5", reason="hacen falta enlaces de Qt")
 
 from hdfeos_extractor.vista.cube_view import (MODO_AREA, MODO_PAN, MODO_PIXEL,
                                               MODO_X, MODO_ZOOM)
-from hdfeos_extractor.vista.panel_cubo import HERRAMIENTAS, PanelCubo
+from hdfeos_extractor.vista.panel_cubo import (HERRAMIENTAS, PanelCubo,
+                                               VentanaSuelta)
 
 
 @pytest.fixture(scope="module")
@@ -100,8 +101,39 @@ def test_los_deslizadores_rgb_arrancan_escondidos(ventana):
     assert ventana.panel_rgb.isHidden()
 
 
-def test_cerrarla_avisa(ventana):
+def test_la_ventana_suelta_avisa_al_cerrarse(app, ventana):
+    """Cerrarla no pierde el cubo: avisa para que se lo lleven de vuelta."""
     avisos = []
-    ventana.cerrada.connect(lambda: avisos.append(True))
-    ventana.close()
+    suelta = VentanaSuelta()
+    suelta.cerrada.connect(lambda: avisos.append(True))
+    suelta.alojar(ventana)
+    assert ventana.window() is suelta
+    suelta.close()
     assert avisos == [True]
+    # Devuelto a nadie, la fixture puede cerrarlo sin que lo borre la
+    # ventana al morir.
+    ventana.setParent(None)
+
+
+def test_alojar_el_cubo_no_le_cambia_las_banderas(app, ventana):
+    """La prevencion del cuelgue de macOS, en el bloque mismo.
+
+    El cubo entra y sale de la ventana sin volverse el una ventana: nadie
+    le toca las banderas, asi que Qt nunca tiene que destruir y rehacer su
+    ventana nativa con la interfaz en marcha.
+    """
+    from PyQt5 import QtWidgets
+    divisor = QtWidgets.QSplitter()
+    divisor.addWidget(ventana)
+    banderas = int(ventana.windowFlags())
+
+    suelta = VentanaSuelta()
+    suelta.alojar(ventana)
+    assert not ventana.isWindow()
+    assert int(ventana.windowFlags()) == banderas
+
+    divisor.insertWidget(0, ventana)
+    assert int(ventana.windowFlags()) == banderas
+    assert divisor.indexOf(ventana) == 0
+    suelta.close()
+    ventana.setParent(None)

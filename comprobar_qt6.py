@@ -100,7 +100,8 @@ def main():
     from hdfeos_extractor.core.rgb import RGBComposer
     from hdfeos_extractor.vista.cube_view import (MODO_AREA, MODO_MULTI,
                                                   MODO_X, MODO_ZOOM)
-    from hdfeos_extractor.vista.panel_cubo import PanelCubo
+    from hdfeos_extractor.vista.panel_cubo import (PanelCubo,
+                                                   VentanaSuelta)
     from hdfeos_extractor.vista.spectral_plot import Curva, SpectralPlot
     from hdfeos_extractor.vista import spectral_plot
 
@@ -154,6 +155,26 @@ def main():
         panel.cubo.acercar(2.0, None)
         panel.cubo.desplazar(12, -8)
         divisor.grab()
+
+        # Soltar el cubo y empotrarlo de vuelta, con el arbol ya visible.
+        # Es el camino que colgo QGIS en macOS, asi que se recorre entero y
+        # se dibuja en los dos sitios: las banderas de ventana se resuelven
+        # en el constructor de VentanaSuelta y ahi Qt6 no perdona un enum
+        # mal escrito.
+        suelta = VentanaSuelta()
+        suelta.resize(900, 600)
+        suelta.alojar(panel)
+        app.processEvents()
+        if suelta.grab().isNull():
+            raise SystemExit("la ventana suelta no se pudo dibujar")
+        divisor.insertWidget(0, panel)
+        panel.show()
+        suelta.hide()
+        app.processEvents()
+        if divisor.grab().isNull():
+            raise SystemExit("el cubo empotrado de vuelta no se pudo dibujar")
+        if panel.isWindow():
+            raise SystemExit("el cubo quedo convertido en ventana")
     finally:
         cubo.close()
 

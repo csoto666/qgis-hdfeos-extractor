@@ -82,6 +82,29 @@ class FalsoIface(object):
         return None
 
 
+def desmontar(panel):
+    """Deshace el panel aqui y ahora, no cuando al recolector le parezca.
+
+    Sin esto, cada prueba deja un panel entero -un QDockWidget sin padre y
+    todo su arbol- vivo del lado de C++, sujeto solo por la referencia de
+    Python. El objeto de C++ muere cuando el recolector suelta esa
+    referencia, y eso pasa en un momento cualquiera: en medio de la prueba
+    siguiente, mientras Qt esta construyendo otro arbol de widgets. La suite
+    se caia asi cada varias corridas, con un fallo de segmentacion dentro de
+    pyqtgraph que no tenia nada que ver con la prueba que lo destapaba.
+
+    Es la misma leccion del cuelgue de macOS, en chico: los widgets se
+    destruyen cuando uno decide, no cuando toca.
+    """
+    panel.apagar()
+    panel.close()
+    panel.setParent(None)
+    panel.deleteLater()
+    aplicacion = QtWidgets.QApplication.instance()
+    if aplicacion is not None:
+        aplicacion.processEvents()          # cobra los deleteLater pendientes
+
+
 @pytest.fixture
 def panel(app, tmp_path):
     from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
@@ -89,7 +112,8 @@ def panel(app, tmp_path):
     hdr = escribir_envi(tmp_path, cubo_patron(), "bil", longitudes_patron())
     p = HyperspectralDock(FalsoIface())
     p._cargar_cubo(hdr, QgsRasterLayer(hdr, "escena"))
-    return p
+    yield p
+    desmontar(p)
 
 
 # -- apertura -----------------------------------------------------------------
@@ -107,6 +131,7 @@ def test_los_controles_arrancan_desactivados_sin_cubo(app):
     from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
     p = HyperspectralDock(FalsoIface())
     assert not panel_habilitado(p)
+    desmontar(p)
 
 
 def panel_habilitado(p):
@@ -121,6 +146,7 @@ def test_un_archivo_que_no_se_puede_abrir_avisa_y_no_rompe(app, tmp_path):
     p._cargar_cubo(str(basura), None)
     assert p.controller.cube is None
     assert not panel_habilitado(p)
+    desmontar(p)
 
 
 # -- interaccion --------------------------------------------------------------
@@ -370,6 +396,7 @@ def test_abrir_un_hdfeos5_directo_desde_el_panel(app, tmp_path):
     # El cubo 3D funciona igual aunque no haya capa en el mapa.
     assert p.cubo._superior is not None
     assert "HDF-EOS5 abierto directamente" in p.estado.text()
+    desmontar(p)
 
 
 def test_extraer_solo_se_ofrece_sobre_un_hdfeos5(app, tmp_path, panel):
@@ -389,6 +416,7 @@ def test_extraer_sin_escena_avisa_en_vez_de_romper(app):
     p = HyperspectralDock(FalsoIface())
     p._extraer_a_envi()
     assert "abra una escena" in p.estado.text()
+    desmontar(p)
 
 
 # -- bandas malas en el panel -------------------------------------------------
@@ -404,7 +432,8 @@ def panel_ancho(app, tmp_path):
     hdr = escribir_envi(tmp_path, datos, "bil", wl, nombre="ancha")
     p = HyperspectralDock(FalsoIface())
     p._cargar_cubo(hdr, QgsRasterLayer(hdr, "ancha"))
-    return p
+    yield p
+    desmontar(p)
 
 
 def test_al_abrir_se_informa_cuantas_bandas_se_descartan(panel_ancho):
@@ -480,6 +509,7 @@ def test_la_casilla_de_la_bbl_se_enciende_si_el_archivo_la_trae(app,
     assert p.controller.cube.mask.hay_bbl
     assert p.casillas_bandas["usar_bbl"].isEnabled()
     assert "lista del archivo" in p.cuenta_bandas.text()
+    desmontar(p)
 
 
 def test_cambiar_la_mascara_recalcula_la_firma_en_pantalla(panel_ancho):
@@ -569,6 +599,7 @@ def test_enviar_sin_escena_avisa(app):
     p = HyperspectralDock(FalsoIface())
     p._enviar_a_qgis()
     assert "abra una escena" in p.estado.text()
+    desmontar(p)
 
 
 def test_enviar_sin_gdal_avisa_en_vez_de_romper(panel, monkeypatch):
@@ -605,17 +636,36 @@ def test_el_divisor_se_orienta_segun_la_forma_del_panel(panel):
 
 def test_soltar_el_cubo_y_volver_a_empotrarlo(panel):
     """Cambiar de sitio no reconstruye la vista: el cubo abierto sigue ahi."""
-    from PyQt5.QtCore import Qt
     cubo_abierto = panel.panel_cubo.cubo.cube
     panel.panel_cubo.boton_soltar.setChecked(True)
-    assert panel.panel_cubo.windowFlags() & Qt.Window
     assert panel.divisor.indexOf(panel.panel_cubo) == -1
+    assert panel.panel_cubo.window() is panel.ventana_suelta
     assert panel.panel_cubo.cubo.cube is cubo_abierto
 
     panel.panel_cubo.boton_soltar.setChecked(False)
-    assert not (panel.panel_cubo.windowFlags() & Qt.Window)
     assert panel.divisor.indexOf(panel.panel_cubo) == 0
     assert panel.panel_cubo.cubo.cube is cubo_abierto
+
+
+def test_soltar_el_cubo_no_lo_convierte_en_ventana(panel):
+    """El cubo va DENTRO de una ventana; no se vuelve el una ventana.
+
+    Es la prevencion del cuelgue de macOS. Ponerle a un widget ya montado la
+    bandera de ventana y quitarsela despues obliga a Qt a destruir y rehacer
+    su ventana nativa en caliente; la pila del cuelgue termina justo ahi, en
+    QWidget::create, mientras la animacion del acople recorre los hijos del
+    panel para mostrarlos. Si las banderas no se tocan nunca, ese camino no
+    existe.
+    """
+    banderas = panel.panel_cubo.windowFlags()
+    panel.panel_cubo.boton_soltar.setChecked(True)
+    assert not panel.panel_cubo.isWindow()
+    assert panel.panel_cubo.windowFlags() == banderas
+    assert panel.ventana_suelta.isWindow()
+
+    panel.panel_cubo.boton_soltar.setChecked(False)
+    assert panel.panel_cubo.windowFlags() == banderas
+    assert not panel.ventana_suelta.isVisible()
 
 
 def girar_el_bucle():
@@ -628,7 +678,7 @@ def girar_el_bucle():
 def test_cerrar_la_ventana_suelta_devuelve_el_cubo_al_panel(panel):
     """Nunca se pierde la vista por cerrar una ventana."""
     panel.panel_cubo.boton_soltar.setChecked(True)
-    panel.panel_cubo.close()
+    panel.ventana_suelta.close()
     girar_el_bucle()                   # el empotrado va aplazado a proposito
     assert not panel.panel_cubo.boton_soltar.isChecked()
     assert panel.divisor.indexOf(panel.panel_cubo) == 0
@@ -674,8 +724,80 @@ def test_cerrar_la_ventana_suelta_la_devuelve_visible(panel):
     panel.panel_cubo.boton_soltar.setChecked(True)
     assert panel.divisor.indexOf(panel.panel_cubo) == -1
 
-    panel.panel_cubo.close()
+    panel.ventana_suelta.close()
     girar_el_bucle()
 
     assert panel.divisor.indexOf(panel.panel_cubo) == 0
     assert not panel.panel_cubo.isHidden()
+
+
+def test_cerrar_el_panel_con_el_cubo_suelto_conserva_el_arreglo(panel):
+    """La X del panel esconde las dos ventanas; volver a abrirlo las trae.
+
+    Antes el cierre CERRABA la ventana suelta, y eso disparaba el
+    reempotrado: el usuario perdia el arreglo de dos ventanas que habia
+    elegido, y el panel reacomodaba su arbol de widgets justo mientras Qt lo
+    estaba escondiendo, que es de donde salia el cuelgue.
+    """
+    panel.show()
+    panel.panel_cubo.boton_soltar.setChecked(True)
+
+    panel.close()
+    girar_el_bucle()
+    assert panel.divisor.indexOf(panel.panel_cubo) == -1
+    assert not panel.ventana_suelta.isVisible()
+
+    panel.show()
+    girar_el_bucle()
+    assert panel.panel_cubo.boton_soltar.isChecked()
+    assert panel.ventana_suelta.isVisible()
+
+
+def test_al_mostrar_el_panel_no_se_toca_el_lienzo_ahi_mismo(panel):
+    """La herramienta vuelve, pero en el siguiente giro del bucle.
+
+    El showEvent del panel corre DENTRO de la animacion de acople de QGIS
+    -QMainWindowLayout la termina y ahi mismo muestra el panel y sus hijos-.
+    Cambiar la herramienta del lienzo en ese punto es reentrar en el mismo
+    lienzo que Qt esta reacomodando. Aplazarlo un giro no cuesta nada y saca
+    todo nuestro trabajo de esa pila.
+    """
+    canvas = panel.iface.mapCanvas()
+    panel.close()
+    canvas.herramienta = None
+
+    panel.show()
+    assert canvas.herramienta is None
+
+    girar_el_bucle()
+    assert canvas.herramienta is panel.herramienta
+
+
+def test_apagar_no_deja_la_ventana_suelta_flotando(panel):
+    """Descargar el complemento se lleva tambien la ventana de al lado.
+
+    Sin esto queda una ventana con un cubo ya cerrado dentro, encima de
+    QGIS y sin nada que la gobierne.
+    """
+    panel.show()
+    panel.panel_cubo.boton_soltar.setChecked(True)
+    ventana = panel.ventana_suelta
+
+    panel.apagar()
+
+    assert not ventana.isVisible()
+    assert panel.divisor.indexOf(panel.panel_cubo) == 0
+
+
+def test_apagar_dos_veces_no_revienta(panel):
+    """Apagar es una promesa, no un paso de un guion.
+
+    El complemento apaga el panel y despues lo cierra, y las pruebas lo
+    apagan otra vez al desmontarlo. Quien lo pide dos veces no tiene por que
+    saber si ya estaba hecho.
+    """
+    panel.panel_cubo.boton_soltar.setChecked(True)
+    panel.apagar()
+    girar_el_bucle()                   # aqui muere de verdad la ventana
+    panel.apagar()
+    panel.close()

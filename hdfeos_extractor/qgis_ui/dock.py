@@ -41,7 +41,7 @@ from ..core.bandas import formatear_rangos, parsear_rangos
 from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
 from ..vista.cube_view import MODOS_NAVEGACION
-from ..vista.panel_cubo import PanelCubo
+from ..vista.panel_cubo import PanelCubo, VentanaSuelta
 from ..vista.qt import (HORIZONTAL, VERTICAL, QtCore, QtGui,
                         QtWidgets, Qt, enum, politica)
 from ..vista.spectral_plot import SpectralPlot
@@ -141,6 +141,11 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         # hacia un objeto de C++ que ya no existe.
         self._aplazado = QtCore.QTimer(self)
         self._aplazado.setSingleShot(True)
+        # Lo mismo para lo que hay que rehacer al volver a mostrar el panel:
+        # el showEvent corre dentro de la animacion de acople de QGIS y ahi
+        # no se toca nada de fuera. Vease showEvent.
+        self._al_mostrar = QtCore.QTimer(self)
+        self._al_mostrar.setSingleShot(True)
 
         self.setObjectName("HyperspectralExplorerDock")
         self.setWidget(self._construir())
@@ -161,6 +166,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         """
         self.panel_cubo = PanelCubo()
         self._adoptar_widgets_del_cubo()
+        # Vacia hasta que se suelte el cubo. Se crea junto con el panel para
+        # que soltar sea solo mudar de padre, sin construir nada en caliente.
+        self.ventana_suelta = VentanaSuelta(self._ventana_principal())
 
         # En el divisor van las dos vistas y nada mas. Metiendo ademas la
         # fila de la escena, la biblioteca y el estado, la mitad de abajo
@@ -238,9 +246,16 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         """Donde esta acoplado, o None si flota o todavia no se sabe."""
         if self.isFloating():
             return None
+        ventana = self._ventana_principal()
         try:
-            ventana = self.iface.mainWindow()
             return ventana.dockWidgetArea(self) if ventana else None
+        except (AttributeError, RuntimeError):
+            return None
+
+    def _ventana_principal(self):
+        """La ventana de QGIS, o None si el anfitrion no la ofrece."""
+        try:
+            return self.iface.mainWindow()
         except (AttributeError, RuntimeError):
             return None
 
@@ -285,25 +300,25 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         """Saca el cubo a una ventana aparte, o lo devuelve al divisor.
 
         Empotrado es lo normal; suelto gana cuando hay dos pantallas. Pasar
-        de uno a otro es cambiar el padre y la bandera de ventana, y la
-        vista no se reconstruye: el cubo abierto, el zoom y la herramienta
-        elegida siguen donde estaban.
+        de uno a otro es solo cambiar de padre -del divisor a la ventana de
+        al lado y de vuelta-, asi que la vista no se reconstruye: el cubo
+        abierto, el zoom y la herramienta elegida siguen donde estaban.
+
+        Lo que NO se hace es volver ventana al propio cubo. Esa es la
+        diferencia que importa: ponerle y quitarle la bandera de ventana a
+        un widget ya montado colgaba QGIS en macOS. Vease ``VentanaSuelta``.
         """
-        if suelto == self._cubo_suelto:
+        if suelto == self._cubo_suelto or self.ventana_suelta is None:
             return
         self._cubo_suelto = suelto
         if suelto:
-            self.panel_cubo.setParent(None)
-            self.panel_cubo.setWindowFlags(enum(Qt, "WindowType", "Window"))
-            self.panel_cubo.resize(1000, 700)
-            self.panel_cubo.show()
-            self.panel_cubo.raise_()
-            self.panel_cubo.activateWindow()
+            self.ventana_suelta.resize(1000, 700)
+            self.ventana_suelta.alojar(self.panel_cubo)
         else:
-            self.panel_cubo.setWindowFlags(enum(Qt, "WindowType", "Widget"))
             self.divisor.insertWidget(0, self.panel_cubo)
             self.divisor.setStretchFactor(0, 3)
             self.panel_cubo.show()
+            self.ventana_suelta.hide()
         self.panel_cubo.boton_soltar.setText(
             "Empotrar aqui" if suelto else "Soltar aparte")
 
@@ -532,6 +547,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.panel_cubo.boton_enviar.clicked.connect(self._enviar_a_qgis)
         self.panel_cubo.soltarPedido.connect(self._soltar_cubo)
         self._aplazado.timeout.connect(self._reempotrar_cubo)
+        self._al_mostrar.timeout.connect(self._restablecer)
         self.vinculo = VinculoVistas(self.cubo, self.canvas, self.controller,
                                      self)
         self.panel_cubo.vinculoPedido.connect(self._vincular)
@@ -540,7 +556,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.dockLocationChanged.connect(lambda _area:
                                          self._orientar_divisor())
         self.topLevelChanged.connect(lambda _flota: self._orientar_divisor())
-        self.panel_cubo.cerrada.connect(self._cubo_cerrado)
+        self.ventana_suelta.cerrada.connect(self._cubo_cerrado)
         self.panel_cubo.boton_acercar.clicked.connect(
             lambda: self.cubo.acercar(0.7))
         self.panel_cubo.boton_alejar.clicked.connect(
@@ -1106,16 +1122,40 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         complemento se descarga, que es cuando de verdad se termina.
         """
         self._soltar_vinculo()
-        if self._cubo_suelto:
-            # Suelta, la ventana del cubo es hija de nadie: cerrar el panel
-            # la dejaria flotando sin dueno y sin forma de recuperarla.
-            self.panel_cubo.close()
+        # Un restablecimiento pendiente vuelve a mostrarlo todo sobre un
+        # panel que el usuario acaba de cerrar: mostrar y cerrar en el mismo
+        # giro del bucle es exactamente lo que pasa al descargar el
+        # complemento con el panel recien abierto.
+        self._al_mostrar.stop()
+        if self._cubo_suelto and self.ventana_suelta is not None:
+            # Esconderla, no cerrarla. Cerrarla dispararia el reempotrado, y
+            # eso es reacomodar el arbol de widgets justo mientras Qt lo
+            # esta escondiendo. Ademas se perderia el arreglo de dos
+            # ventanas que el usuario eligio; escondida vuelve tal cual.
+            self.ventana_suelta.hide()
         self._soltar_herramienta()
         super(HyperspectralDock, self).closeEvent(evento)
 
     def showEvent(self, evento):
-        """Al volver a mostrarlo, la herramienta de mapa vuelve con el."""
+        """Al volver a mostrarlo, todo lo suyo vuelve con el -un giro despues.
+
+        Nada de trabajo aqui dentro. Este metodo corre en mitad de la
+        animacion de acople de QGIS: ``QMainWindowLayout`` la da por
+        terminada y ahi mismo muestra el panel y, uno a uno, sus hijos.
+        Tocar el lienzo -o el arbol de widgets- en ese punto es reentrar en
+        lo que Qt esta reacomodando, y de ahi salio un cuelgue en macOS.
+        Aplazarlo un giro del bucle no le cuesta nada al usuario y saca todo
+        lo nuestro de esa pila.
+        """
         super(HyperspectralDock, self).showEvent(evento)
+        self._al_mostrar.start(0)
+
+    def _restablecer(self):
+        """Lo que el panel recupera al volver a la vista."""
+        if not self.isVisible():
+            return
+        if self._cubo_suelto:
+            self.ventana_suelta.show()
         if self.controller.cube is not None:
             self._activar_herramienta()
 
@@ -1125,10 +1165,34 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         Separado de ``closeEvent`` a proposito. Son dos cosas distintas que
         antes estaban en la misma: esconder un panel y terminar una sesion.
         """
+        # Primero los aplazados: si no, un reempotrado o un restablecimiento
+        # pendiente se despierta sobre un panel a medio desmontar.
+        self._aplazado.stop()
+        self._al_mostrar.stop()
         self._soltar_vinculo()
         self._desconectar_proyecto()
         self.controller.close_cube()
         self._soltar_herramienta()
+        self._recoger_la_ventana_suelta()
+
+    def _recoger_la_ventana_suelta(self):
+        """El cubo vuelve al panel y la ventana de al lado se va con el.
+
+        La ventana suelta no es hija del panel -cuelga de la ventana
+        principal de QGIS-, asi que sin esto sobrevive a la descarga del
+        complemento y queda flotando encima, con un cubo ya cerrado dentro.
+
+        Se puede llamar dos veces sin miedo: ``apagar`` no es un paso de un
+        guion sino una promesa -esto queda desmontado-, y quien la pide dos
+        veces no tiene por que saber si ya estaba cumplida.
+        """
+        if self.ventana_suelta is None:
+            return
+        self.panel_cubo.boton_soltar.setChecked(False)
+        self._soltar_cubo(False)
+        ventana, self.ventana_suelta = self.ventana_suelta, None
+        ventana.close()
+        ventana.deleteLater()
 
     def _soltar_herramienta(self):
         if self.herramienta is not None:

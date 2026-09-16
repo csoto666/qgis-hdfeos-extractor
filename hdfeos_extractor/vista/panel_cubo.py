@@ -87,8 +87,6 @@ class PanelCubo(QtWidgets.QWidget):
     soltarPedido = pyqtSignal(bool)
     #: Pidio vincular -o desvincular- la vista con el lienzo de QGIS.
     vinculoPedido = pyqtSignal(bool)
-    #: Se cerro la ventana suelta.
-    cerrada = pyqtSignal()
 
     def __init__(self, parent=None):
         super(PanelCubo, self).__init__(parent)
@@ -334,12 +332,54 @@ class PanelCubo(QtWidgets.QWidget):
                   self.boton_vinculo):
             w.setEnabled(activo)
 
-    def closeEvent(self, evento):
-        """Cerrar la ventana suelta devuelve el cubo al panel.
 
-        Es lo unico que no deja al usuario sin cubo y sin forma obvia de
-        recuperarlo. Quien la cierra quiere dejar de tener una ventana
-        suelta, no perder la vista.
+class VentanaSuelta(QtWidgets.QWidget):
+    """El alojamiento del cubo cuando se lo saca del panel.
+
+    Existe para que el cubo no tenga que volverse el mismo una ventana.
+    Ponerle la bandera de ventana a un widget ya montado y quitarsela
+    despues obliga a Qt a destruir y rehacer su ventana nativa en caliente,
+    y eso colgo QGIS en macOS: la pila termina en ``QWidget::create``,
+    llamado mientras la animacion de acople recorre los hijos del panel para
+    mostrarlos. El widget habia sido ventana y ya no lo era, y lo que Qt
+    encontro al recrearlo no era lo que esperaba.
+
+    Con un alojamiento aparte, soltar y empotrar es solo cambiarle el padre
+    al cubo. Es la operacion que Qt hace todo el rato -un divisor, una
+    pestana, una barra de herramientas- y la unica pensada para hacerse con
+    la interfaz en marcha. Las banderas de esta ventana, en cambio, se fijan
+    en el constructor, antes de que exista ninguna ventana nativa que
+    rehacer.
+    """
+
+    #: El usuario la cerro. Quien la usa decide que hacer con el contenido.
+    cerrada = pyqtSignal()
+
+    def __init__(self, parent=None):
+        # Las banderas van en el constructor a proposito; vease el docstring.
+        # El padre es la ventana principal de QGIS y no el panel: asi la
+        # ventana se comporta como una herramienta de QGIS -queda por encima
+        # y se va con el- sin depender de un panel que se esconde y se
+        # muestra todo el rato.
+        super(VentanaSuelta, self).__init__(
+            parent, enum(Qt, "WindowType", "Window"))
+        self.setWindowTitle("Cubo hiperespectral")
+        self._caja = QtWidgets.QVBoxLayout(self)
+        self._caja.setContentsMargins(0, 0, 0, 0)
+
+    def alojar(self, widget):
+        """Recibe el cubo y se muestra con el dentro."""
+        self._caja.addWidget(widget)
+        widget.show()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def closeEvent(self, evento):
+        """Cerrarla nunca pierde lo que tiene dentro.
+
+        Quien la cierra quiere dejar de tener una ventana aparte, no perder
+        la vista del cubo: el aviso va al panel, que se lo lleva de vuelta.
         """
         self.cerrada.emit()
-        super(PanelCubo, self).closeEvent(evento)
+        super(VentanaSuelta, self).closeEvent(evento)

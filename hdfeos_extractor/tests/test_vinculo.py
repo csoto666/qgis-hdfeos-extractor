@@ -36,7 +36,7 @@ from dobles import instalar_si_falta_qgis
 
 instalar_si_falta_qgis()
 
-from test_dock import FalsoIface
+from test_dock import FalsoIface, desmontar
 from qgis.core import QgsRectangle
 from hdfeos_extractor.core.georef import Georreferencia
 from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
@@ -65,7 +65,7 @@ def panel(app, tmp_path):
     p = HyperspectralDock(FalsoIface())
     p._cargar_cubo(ruta, None)
     yield p
-    p.close()
+    desmontar(p)
 
 
 def test_la_escena_de_prueba_esta_georreferenciada(panel):
@@ -188,7 +188,7 @@ def test_sin_georreferencia_no_se_vincula_y_se_dice(app, tmp_path):
         # Y el boton no se queda hundido sobre un vinculo que no existe.
         assert not p.panel_cubo.boton_vinculo.isChecked()
     finally:
-        p.close()
+        desmontar(p)
 
 
 def test_una_escena_de_sensor_avisa_de_que_es_aproximado(panel):
