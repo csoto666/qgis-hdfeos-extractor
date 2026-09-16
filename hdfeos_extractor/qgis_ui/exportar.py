@@ -142,8 +142,10 @@ def wkt_de(georref):
             src = osr.SpatialReference()
             if src.ImportFromEPSG(int(georref.epsg)) == 0:
                 return src.ExportToWkt()
-        except Exception:                  # pragma: no cover - OSR raro
-            pass
+        except (RuntimeError, TypeError, ValueError):
+            # Un codigo que la base de datos de PROJ no conoce. Queda el WKT
+            # de mas abajo, que es lo que habria si no hubiera codigo.
+            pass                           # pragma: no cover - OSR raro
     return georref.wkt or None
 
 

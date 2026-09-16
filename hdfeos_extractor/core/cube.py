@@ -42,7 +42,7 @@ import numpy as np
 
 from .bandas import MascaraBandas
 from .envi import EnviError, EnviSource
-from .hdf5 import Hdf5Source, es_hdf5
+from .hdf5 import ErrorLectura, Hdf5Source, es_hdf5
 from .sources import GdalSource, MemorySource
 
 # Cuantas bandas completas se guardan en memoria. Cada banda de una escena
@@ -57,6 +57,21 @@ EXT_GDAL = (".tif", ".tiff", ".jp2", ".vrt", ".nc", ".hdf", ".h5")
 
 class CubeError(Exception):
     """El cubo no se pudo abrir o la operacion pedida no aplica."""
+
+
+#: Lo que puede salir mal al abrir un archivo con cualquiera de los tres
+#: lectores. Se enumera en vez de atrapar Exception a secas por dos razones:
+#: un fallo que no este en esta lista es un error del programa y tiene que
+#: verse, y ``except Exception`` seguido de ``pass`` es justamente lo que los
+#: analizadores marcan -con razon- como tragarse los problemas.
+#:
+#: Es una lista larga porque debajo hay tres bibliotecas -h5py, GDAL y el
+#: lector propio- y cada una se queja a su manera; RuntimeError es como GDAL
+#: informa de casi todo cuando se le encienden las excepciones.
+ERRORES_DE_LECTURA = (
+    ErrorLectura, EnviError, OSError, RuntimeError,
+    ValueError, KeyError, IndexError, TypeError, ImportError,
+)
 
 
 class HyperspectralCube(object):
@@ -118,25 +133,35 @@ class HyperspectralCube(object):
             raise CubeError("No existe: %s" % path)
         nombre = os.path.basename(path)
 
+        # Cada lector que falla deja dicho por que. Antes se descartaban en
+        # silencio y, cuando fallaban los tres, el usuario recibia solo la
+        # queja de GDAL -el ultimo- sobre un archivo que a lo mejor era un
+        # HDF5 con un cubo que no se encontro. Guardar las tres razones
+        # cuesta dos lineas y convierte "no se pudo abrir" en algo que se
+        # puede diagnosticar.
+        porques = []
+
         if es_hdf5(path):
             try:
                 return cls(Hdf5Source(path), name=nombre, **kwargs)
-            except Exception:
+            except ERRORES_DE_LECTURA as exc:
                 # Un netCDF4 tiene la misma firma que un HDF5 y no es una
                 # escena hiperespectral. Que siga el camino normal en vez de
                 # fallar aca.
-                pass
+                porques.append("HDF-EOS5: %s" % exc)
 
         ext = os.path.splitext(path)[1].lower()
         if ext not in EXT_GDAL:
             try:
                 return cls(EnviSource(path), name=nombre, **kwargs)
-            except EnviError:
-                pass          # no era ENVI; que lo intente GDAL
+            except EnviError as exc:
+                porques.append("ENVI: %s" % exc)
         try:
             return cls(GdalSource(path), name=nombre, **kwargs)
-        except Exception as exc:
-            raise CubeError("No se pudo abrir %s: %s" % (path, exc))
+        except ERRORES_DE_LECTURA as exc:
+            porques.append("GDAL: %s" % exc)
+        raise CubeError("No se pudo abrir %s:\n  %s"
+                        % (path, "\n  ".join(porques)))
 
     @classmethod
     def from_array(cls, datos, wavelengths=None, name="cubo", **kwargs):

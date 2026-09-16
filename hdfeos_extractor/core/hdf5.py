@@ -41,6 +41,11 @@ import numpy as np
 
 from ..lector import ErrorLectura, Escena
 
+#: Como se queja GDAL cuando no puede abrir algo. Con las excepciones
+#: encendidas casi todo llega como RuntimeError; los otros dos aparecen
+#: cuando la URI esta mal formada o el objeto devuelto no es lo esperado.
+ERRORES_DE_GDAL = (RuntimeError, ValueError, AttributeError)
+
 #: Los ocho bytes con que empieza todo archivo HDF5.
 FIRMA_HDF5 = b"\x89HDF\r\n\x1a\n"
 
@@ -202,7 +207,9 @@ class Hdf5Source(object):
                 if ds is None:
                     continue
                 georref = Georreferencia.de_gdal(ds)
-            except Exception:              # pragma: no cover - driver raro
+            except ERRORES_DE_GDAL:        # pragma: no cover - driver raro
+                # Una URI que este driver no entiende. Se prueba la
+                # siguiente; que no haya salido nada se responde mas abajo.
                 continue
             finally:
                 ds = None

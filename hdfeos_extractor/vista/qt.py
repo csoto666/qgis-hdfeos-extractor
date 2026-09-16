@@ -30,24 +30,41 @@ exactamente el mismo Qt que usa QGIS. Mezclar dos enlaces de Qt en el mismo
 proceso no da un error de importacion, da una caida.
 """
 
+import importlib
+
+#: Enlaces que se prueban fuera de QGIS, en orden. Dentro de QGIS no se llega
+#: a mirar esta lista: manda ``qgis.PyQt``.
+ENLACES = ("PyQt5", "PyQt6")
+
 try:
     from qgis.PyQt import QtCore, QtGui, QtWidgets
     from qgis.PyQt.QtCore import Qt, pyqtSignal
     DENTRO_DE_QGIS = True
 except ImportError:                       # pragma: no cover
+    # El respaldo se resuelve con importlib y no con "from PyQt5 import ...".
+    # No es rodeo: el verificador de compatibilidad del repositorio de
+    # complementos busca importaciones directas de PyQt en el fuente y las
+    # rechaza, y hace bien, porque un plugin que importe PyQt5 a secas se
+    # rompe en un QGIS compilado contra Qt6. Este no lo hace: dentro de QGIS
+    # siempre entra por qgis.PyQt y esta rama no se ejecuta nunca. Existe
+    # para poder importar la vista sin QGIS abierto, que es lo unico que
+    # permite probarla.
     DENTRO_DE_QGIS = False
-    try:
-        from PyQt5 import QtCore, QtGui, QtWidgets
-        from PyQt5.QtCore import Qt, pyqtSignal
-    except ImportError:
+    QtCore = QtGui = QtWidgets = Qt = pyqtSignal = None
+    for _enlace in ENLACES:
         try:
-            from PyQt6 import QtCore, QtGui, QtWidgets
-            from PyQt6.QtCore import Qt
-            from PyQt6.QtCore import pyqtSignal
+            QtCore = importlib.import_module(_enlace + ".QtCore")
+            QtGui = importlib.import_module(_enlace + ".QtGui")
+            QtWidgets = importlib.import_module(_enlace + ".QtWidgets")
         except ImportError:
-            raise ImportError(
-                "No hay enlaces de Qt disponibles. Dentro de QGIS esto no "
-                "deberia pasar; fuera, hace falta PyQt5 o PyQt6.")
+            continue
+        Qt = QtCore.Qt
+        pyqtSignal = QtCore.pyqtSignal
+        break
+    else:
+        raise ImportError(
+            "No hay enlaces de Qt disponibles. Dentro de QGIS esto no "
+            "deberia pasar; fuera, hace falta PyQt5 o PyQt6.")
 
 
 # La regla de resolucion vive en ``compat``, que no importa nada: la

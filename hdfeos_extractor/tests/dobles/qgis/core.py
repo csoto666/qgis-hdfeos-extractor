@@ -167,6 +167,10 @@ class QgsMultiBandColorRenderer(object):
         self.azul = realce
 
 
+class QgsCsException(Exception):
+    """Lo que QGIS lanza cuando una reproyeccion no es posible."""
+
+
 class QgsCoordinateTransform(object):
     def __init__(self, *args):
         pass

@@ -34,8 +34,8 @@ desaparecen al desactivar la herramienta.
 import time
 
 from qgis.core import (QgsCoordinateReferenceSystem,
-                       QgsCoordinateTransform, QgsGeometry, QgsPointXY,
-                       QgsProject, QgsWkbTypes)
+                       QgsCoordinateTransform, QgsCsException, QgsGeometry,
+                       QgsPointXY, QgsProject, QgsWkbTypes)
 from qgis.gui import QgsMapTool, QgsRubberBand
 
 from ..vista.qt import QtGui, Qt, enum, pyqtSignal
@@ -135,7 +135,10 @@ class HerramientaExplorar(QgsMapTool):
                     transformacion = QgsCoordinateTransform(
                         origen, destino, QgsProject.instance())
                     punto = transformacion.transform(punto)
-                except Exception:
+                except QgsCsException:
+                    # El clic cae donde la reproyeccion no esta definida
+                    # -fuera del area de validez del SRC-. No hay pixel que
+                    # devolver, y forzar uno daria un espectro de otro sitio.
                     return None
         col, fila = self.controller.geo.to_pixel(punto.x(), punto.y())
         cubo = self.controller.cube
@@ -181,7 +184,11 @@ class HerramientaExplorar(QgsMapTool):
             try:
                 punto = QgsCoordinateTransform(
                     origen, destino, QgsProject.instance()).transform(punto)
-            except Exception:
+            except QgsCsException:
+                # Sin reproyeccion posible se devuelve el punto tal cual: la
+                # marca queda donde el dato dice, que es menos malo que no
+                # dibujarla. Aqui no se pierde ninguna medida, solo se mueve
+                # un adorno.
                 pass
         return punto
 

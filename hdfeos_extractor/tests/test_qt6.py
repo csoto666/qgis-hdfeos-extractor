@@ -132,6 +132,52 @@ def test_no_hay_enums_sin_calificar():
         "Enums sin calificar, que en Qt6 no existen:\n  " + detalle)
 
 
+def imports_directos_de_pyqt(ruta):
+    """Importaciones de PyQt que no pasan por ``qgis.PyQt``.
+
+    Un complemento que haga ``from PyQt5 import ...`` se rompe en un QGIS
+    compilado contra Qt6, porque ahi ese modulo no existe. Dentro de QGIS
+    hay que entrar siempre por ``qgis.PyQt``, que resuelve al enlace que
+    toque. Es la misma regla que aplica el verificador del repositorio de
+    complementos, comprobada aqui para enterarse antes de publicar.
+    """
+    with open(ruta, encoding="utf-8") as f:
+        arbol = ast.parse(f.read(), ruta)
+    hallazgos = []
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.ImportFrom) and not nodo.level:
+            origen = nodo.module or ""
+        elif isinstance(nodo, ast.Import):
+            origen = nodo.names[0].name
+        else:
+            continue
+        raiz = origen.split(".")[0]
+        if raiz in ("PyQt5", "PyQt6"):
+            hallazgos.append((nodo.lineno, origen))
+    return hallazgos
+
+
+def test_pyqt_solo_se_importa_a_traves_de_qgis():
+    """El respaldo fuera de QGIS existe, pero se resuelve con importlib.
+
+    No es un rodeo para callar al verificador: dentro de QGIS esa rama no se
+    ejecuta nunca, porque ``qgis.PyQt`` siempre esta. Existe para poder
+    importar la vista sin QGIS abierto, que es lo unico que permite
+    probarla. Escrita como importacion estatica, un lector -humano o
+    automatico- no puede distinguir eso de un plugin que de verdad depende
+    de PyQt5.
+    """
+    culpables = []
+    for ruta in fuentes():
+        for linea, origen in imports_directos_de_pyqt(ruta):
+            culpables.append("%s:%d  %s"
+                             % (os.path.basename(ruta), linea, origen))
+    detalle = "\n  ".join(culpables)
+    assert not culpables, (
+        "Importaciones directas de PyQt, que en un QGIS con Qt6 no "
+        "resuelven:\n  " + detalle)
+
+
 def test_el_detector_reconoce_las_dos_formas(tmp_path):
     """Una prueba que no distinga plano de calificado no prueba nada."""
     fichero = tmp_path / "ejemplo.py"
