@@ -131,6 +131,9 @@ class HdfEosPlugin(object):
     # -- descarga -----------------------------------------------------------
     def unload(self):
         if self.dock is not None:
+            # apagar() antes de close(): cerrar solo esconde -es lo que hace
+            # la X del panel- y aqui si se termina de verdad.
+            self.dock.apagar()
             self.dock.close()
             self.iface.removeDockWidget(self.dock)
             self.dock.deleteLater()

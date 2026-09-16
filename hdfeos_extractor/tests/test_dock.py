@@ -186,16 +186,32 @@ def test_cambiar_de_modo_no_rompe_sin_herramienta(panel):
 
 
 # -- cierre -------------------------------------------------------------------
-def test_cerrar_suelta_las_senales_del_proyecto(panel):
-    """Sin esto, cerrar el panel deja conexiones vivas hacia un objeto que ya
-    no esta, y la proxima capa que se agregue al proyecto tumba QGIS."""
+def test_apagar_suelta_las_senales_del_proyecto(panel):
+    """Sin esto, descargar el complemento deja conexiones vivas hacia un
+    objeto que ya no esta, y la proxima capa que se agregue al proyecto
+    tumba QGIS.
+
+    Lo hace ``apagar()`` y no ``close()``: cerrar el panel solo lo esconde,
+    y el complemento sigue cargado y queriendo enterarse de las capas
+    nuevas. Soltarlas al esconderlo dejaba la lista de capas congelada al
+    volver a abrirlo.
+    """
+    from qgis.core import QgsProject
+    proyecto = QgsProject.instance()
+    antes = len(getattr(proyecto.layersAdded, "conectados", []))
+    panel.apagar()
+    despues = len(getattr(proyecto.layersAdded, "conectados", []))
+    assert despues < antes or antes == 0
+    proyecto.layersAdded.emit([])      # no debe reventar
+
+
+def test_cerrar_no_suelta_las_senales_del_proyecto(panel):
+    """Esconder el panel no puede dejarlo sordo a las capas nuevas."""
     from qgis.core import QgsProject
     proyecto = QgsProject.instance()
     antes = len(getattr(proyecto.layersAdded, "conectados", []))
     panel.close()
-    despues = len(getattr(proyecto.layersAdded, "conectados", []))
-    assert despues < antes or antes == 0
-    proyecto.layersAdded.emit([])      # no debe reventar
+    assert len(getattr(proyecto.layersAdded, "conectados", [])) == antes
 
 
 # -- enlace con la vista del cubo ---------------------------------------------
@@ -602,9 +618,64 @@ def test_soltar_el_cubo_y_volver_a_empotrarlo(panel):
     assert panel.panel_cubo.cubo.cube is cubo_abierto
 
 
+def girar_el_bucle():
+    """Deja correr los eventos aplazados con QTimer.singleShot(0, ...)."""
+    aplicacion = QtWidgets.QApplication.instance()
+    if aplicacion is not None:
+        aplicacion.processEvents()
+
+
 def test_cerrar_la_ventana_suelta_devuelve_el_cubo_al_panel(panel):
     """Nunca se pierde la vista por cerrar una ventana."""
     panel.panel_cubo.boton_soltar.setChecked(True)
     panel.panel_cubo.close()
+    girar_el_bucle()                   # el empotrado va aplazado a proposito
     assert not panel.panel_cubo.boton_soltar.isChecked()
     assert panel.divisor.indexOf(panel.panel_cubo) == 0
+
+
+# -- abrir y cerrar sin perder el trabajo ----------------------------------
+def test_cerrar_el_panel_no_cierra_la_escena(panel):
+    """Cerrar el panel es esconderlo, no terminar la sesion.
+
+    La X de un panel acoplado de QGIS lo oculta; el complemento sigue
+    cargado. Si al ocultarlo se cierra el cubo, al volver a abrirlo el
+    usuario encuentra el panel vacio y ha perdido el trabajo por pulsar una
+    X que en QGIS no significa eso en ningun otro sitio.
+    """
+    cubo = panel.controller.cube
+    assert cubo is not None and not cubo.cerrado
+    panel.close()
+    assert panel.controller.cube is cubo
+    assert not panel.controller.cube.cerrado
+
+
+def test_al_volver_a_abrirlo_sigue_todo_en_su_sitio(panel):
+    """La biblioteca, el encuadre y la escena sobreviven al cierre."""
+    panel.controller.on_pixel_changed(3, 2)
+    panel.controller.save_current("una firma")
+    panel.cubo.set_vista((1, 1, 4, 5))
+
+    panel.close()
+    panel.show()
+
+    assert len(panel.controller.library) == 1
+    assert panel.cubo.ventana() == (1, 1, 4, 5)
+    assert panel.controller.cube is not None
+
+
+def test_cerrar_la_ventana_suelta_la_devuelve_visible(panel):
+    """No basta con reinsertarla en el divisor: tiene que verse.
+
+    Es el fallo que deja al usuario sin cubo y sin forma obvia de
+    recuperarlo, porque no hay ningun boton que diga "traelo de vuelta".
+    """
+    panel.show()
+    panel.panel_cubo.boton_soltar.setChecked(True)
+    assert panel.divisor.indexOf(panel.panel_cubo) == -1
+
+    panel.panel_cubo.close()
+    girar_el_bucle()
+
+    assert panel.divisor.indexOf(panel.panel_cubo) == 0
+    assert not panel.panel_cubo.isHidden()

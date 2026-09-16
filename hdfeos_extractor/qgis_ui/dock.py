@@ -42,8 +42,8 @@ from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
 from ..vista.cube_view import MODOS_NAVEGACION
 from ..vista.panel_cubo import PanelCubo
-from ..vista.qt import (HORIZONTAL, VERTICAL, QtGui, QtWidgets,
-                        Qt, enum, politica)
+from ..vista.qt import (HORIZONTAL, VERTICAL, QtCore, QtGui,
+                        QtWidgets, Qt, enum, politica)
 from ..vista.spectral_plot import SpectralPlot
 from . import map_tools
 from .controller import SpatialSpectralController
@@ -134,6 +134,13 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.divisor = None            # existe recien en _construir
         self._cubo_suelto = False
         self.vinculo = None            # necesita el cubo, que aun no existe
+        # Hijo del panel a proposito: Qt lo destruye junto con el, asi que un
+        # empotrado aplazado no puede dispararse sobre un panel ya borrado.
+        # Un QTimer.singleShot suelto no da esa garantia -no admite objeto de
+        # contexto en estas vinculaciones- y dejaria una llamada pendiente
+        # hacia un objeto de C++ que ya no existe.
+        self._aplazado = QtCore.QTimer(self)
+        self._aplazado.setSingleShot(True)
 
         self.setObjectName("HyperspectralExplorerDock")
         self.setWidget(self._construir())
@@ -305,7 +312,18 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
         Nunca se pierde la vista por cerrar una ventana. El boton se
         desmarca solo, y desmarcarlo es lo que empotra de vuelta.
+
+        Se aplaza al siguiente giro del bucle de eventos, y no es un adorno:
+        esto corre DENTRO del closeEvent de la propia ventana. Reinsertarla
+        y mostrarla ahi mismo no sirve, porque Qt termina de cerrar despues y
+        la vuelve a esconder: el cubo quedaba empotrado pero invisible, sin
+        ningun boton que dijera "traelo de vuelta".
         """
+        if self._cubo_suelto:
+            self._aplazado.start(0)
+
+    def _reempotrar_cubo(self):
+        """Desmarcar el boton es lo que dispara el empotrado."""
         if self._cubo_suelto:
             self.panel_cubo.boton_soltar.setChecked(False)
 
@@ -513,6 +531,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.panel_cubo.envioPedido.connect(self._enviar_a_qgis)
         self.panel_cubo.boton_enviar.clicked.connect(self._enviar_a_qgis)
         self.panel_cubo.soltarPedido.connect(self._soltar_cubo)
+        self._aplazado.timeout.connect(self._reempotrar_cubo)
         self.vinculo = VinculoVistas(self.cubo, self.canvas, self.controller,
                                      self)
         self.panel_cubo.vinculoPedido.connect(self._vincular)
@@ -1070,16 +1089,50 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
     # -- cierre -------------------------------------------------------------
     def closeEvent(self, evento):
+        """Cerrar el panel lo esconde; no termina la sesion.
+
+        La X de un panel acoplado de QGIS lo oculta, y el complemento sigue
+        cargado. Aqui se cerraba ademas la escena y se soltaban las senales
+        del proyecto, asi que al volver a abrirlo el usuario encontraba el
+        panel vacio: habia perdido el trabajo por pulsar una X que en ningun
+        otro sitio de QGIS significa eso.
+
+        Lo que si se suelta es lo que no tiene sentido con el panel oculto:
+        el vinculo con el lienzo y la herramienta de mapa, que si no seguiria
+        capturando los clics del usuario sobre un panel que no ve. Las dos
+        vuelven solas al mostrarlo.
+
+        El desmontaje de verdad esta en ``apagar()``, que corre cuando el
+        complemento se descarga, que es cuando de verdad se termina.
+        """
         self._soltar_vinculo()
         if self._cubo_suelto:
             # Suelta, la ventana del cubo es hija de nadie: cerrar el panel
             # la dejaria flotando sin dueno y sin forma de recuperarla.
             self.panel_cubo.close()
+        self._soltar_herramienta()
+        super(HyperspectralDock, self).closeEvent(evento)
+
+    def showEvent(self, evento):
+        """Al volver a mostrarlo, la herramienta de mapa vuelve con el."""
+        super(HyperspectralDock, self).showEvent(evento)
+        if self.controller.cube is not None:
+            self._activar_herramienta()
+
+    def apagar(self):
+        """El desmontaje de verdad: el complemento se esta descargando.
+
+        Separado de ``closeEvent`` a proposito. Son dos cosas distintas que
+        antes estaban en la misma: esconder un panel y terminar una sesion.
+        """
+        self._soltar_vinculo()
         self._desconectar_proyecto()
         self.controller.close_cube()
+        self._soltar_herramienta()
+
+    def _soltar_herramienta(self):
         if self.herramienta is not None:
             self.canvas.unsetMapTool(self.herramienta)
-        super(HyperspectralDock, self).closeEvent(evento)
 
     def _desconectar_proyecto(self):
         """Suelta las senales del proyecto.
