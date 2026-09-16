@@ -33,6 +33,7 @@ de onda y con que criterio se realza. Lo unico que cambia es quien pinta.
 from qgis.core import (QgsContrastEnhancement, QgsMultiBandColorRenderer,
                        QgsRasterLayer)
 
+from ..compat import enum
 from ..core.rgb import limites
 
 
@@ -82,7 +83,9 @@ def aplicar_composicion(layer, cube, composer):
         lo, hi = limites_de_banda(cube, indice, composer)
         realce = QgsContrastEnhancement(proveedor.dataType(indice + 1))
         realce.setContrastEnhancementAlgorithm(
-            QgsContrastEnhancement.StretchToMinimumMaximum, False)
+            enum(QgsContrastEnhancement,
+                 "ContrastEnhancementAlgorithm",
+                 "StretchToMinimumMaximum"), False)
         realce.setMinimumValue(lo)
         realce.setMaximumValue(hi)
         poner(realce)

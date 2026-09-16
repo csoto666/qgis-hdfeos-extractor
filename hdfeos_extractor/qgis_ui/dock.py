@@ -42,7 +42,8 @@ from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
 from ..vista.cube_view import MODOS_NAVEGACION
 from ..vista.panel_cubo import PanelCubo
-from ..vista.qt import QtGui, QtWidgets, Qt
+from ..vista.qt import (HORIZONTAL, VERTICAL, QtGui, QtWidgets,
+                        Qt, enum, politica)
 from ..vista.spectral_plot import SpectralPlot
 from . import map_tools
 from .controller import SpatialSpectralController
@@ -66,6 +67,15 @@ FILTRO_ARCHIVOS = (
 #: Identificador del algoritmo de extraccion, para abrirlo desde el panel.
 ALGORITMO_EXTRAER = "hdfeos_extractor:extraer_hdfeos_a_envi"
 
+
+#: Enums de Qt que se usan en varios sitios del panel. En Qt6 viven dentro de
+#: su clase; resolverlos aqui una vez deja las comparaciones legibles.
+_AREA_IZQUIERDA = enum(Qt, "DockWidgetArea", "LeftDockWidgetArea")
+_AREA_DERECHA = enum(Qt, "DockWidgetArea", "RightDockWidgetArea")
+_AREA_ARRIBA = enum(Qt, "DockWidgetArea", "TopDockWidgetArea")
+_AREA_ABAJO = enum(Qt, "DockWidgetArea", "BottomDockWidgetArea")
+_MARCADO = enum(Qt, "CheckState", "Checked")
+_SIN_MARCAR = enum(Qt, "CheckState", "Unchecked")
 
 TITULO = "Hyperspectral Explorer"
 
@@ -148,7 +158,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         # sumaba minimos hasta desbordar y los bloques se pisaban. Lo que no
         # necesita area queda fuera, arriba y abajo, donde ocupa su alto y
         # se acaba la discusion.
-        self.divisor = QtWidgets.QSplitter(Qt.Horizontal)
+        self.divisor = QtWidgets.QSplitter(HORIZONTAL)
         self.divisor.setChildrenCollapsible(False)
         self.divisor.addWidget(self.panel_cubo)
         self.divisor.addWidget(self._bloque_grafico())
@@ -184,8 +194,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         """
         if self.divisor is None:
             return
-        quiere = (Qt.Horizontal if self._conviene_a_lo_ancho()
-                  else Qt.Vertical)
+        quiere = HORIZONTAL if self._conviene_a_lo_ancho() else VERTICAL
         if self.divisor.orientation() != quiere:
             self.divisor.setOrientation(quiere)
             self._repartir_divisor()
@@ -201,7 +210,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         el divisor.
         """
         largo = (self.divisor.width()
-                 if self.divisor.orientation() == Qt.Horizontal
+                 if self.divisor.orientation() == HORIZONTAL
                  else self.divisor.height())
         if largo > 0:
             cubo = int(largo * 0.56)
@@ -209,10 +218,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
     def _conviene_a_lo_ancho(self):
         area = self._area_de_acople()
-        if area in (Qt.LeftDockWidgetArea, Qt.RightDockWidgetArea):
+        if area in (_AREA_IZQUIERDA, _AREA_DERECHA):
             # Columna: el cubo arriba y el espectro abajo.
             return False
-        if area in (Qt.TopDockWidgetArea, Qt.BottomDockWidgetArea):
+        if area in (_AREA_ARRIBA, _AREA_ABAJO):
             return True                # franja ancha: uno al lado del otro
         return self.width() >= self.height() * 1.2      # flotante
 
@@ -244,13 +253,13 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self._cubo_suelto = suelto
         if suelto:
             self.panel_cubo.setParent(None)
-            self.panel_cubo.setWindowFlags(Qt.Window)
+            self.panel_cubo.setWindowFlags(enum(Qt, "WindowType", "Window"))
             self.panel_cubo.resize(1000, 700)
             self.panel_cubo.show()
             self.panel_cubo.raise_()
             self.panel_cubo.activateWindow()
         else:
-            self.panel_cubo.setWindowFlags(Qt.Widget)
+            self.panel_cubo.setWindowFlags(enum(Qt, "WindowType", "Widget"))
             self.divisor.insertWidget(0, self.panel_cubo)
             self.divisor.setStretchFactor(0, 3)
             self.panel_cubo.show()
@@ -313,8 +322,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
     def _fila_capa(self):
         rejilla = QtWidgets.QHBoxLayout()
         self.combo_capa = QtWidgets.QComboBox()
-        self.combo_capa.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
-                                      QtWidgets.QSizePolicy.Preferred)
+        self.combo_capa.setSizePolicy(politica("Expanding"),
+                                      politica("Preferred"))
         self.boton_abrir = QtWidgets.QPushButton("Abrir...")
         self.boton_abrir.setToolTip(
             "Abre un cubo desde el disco: HDF-EOS5 directamente, o un ENVI "
@@ -408,8 +417,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         boton = QtWidgets.QToolButton()
         boton.setText(texto)
         boton.setToolTip(ayuda)
-        boton.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
-                            QtWidgets.QSizePolicy.Preferred)
+        boton.setSizePolicy(politica("Expanding"), politica("Preferred"))
         return boton
 
     def _bloque_firmas(self):
@@ -417,8 +425,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         # Preferred/Maximum y no el Expanding que traen los grupos: sin esto
         # se queda con el alto sobrante en vez de cederselo al divisor, que
         # es donde estan las dos vistas.
-        grupo.setSizePolicy(QtWidgets.QSizePolicy.Preferred,
-                            QtWidgets.QSizePolicy.Maximum)
+        grupo.setSizePolicy(politica("Preferred"), politica("Maximum"))
         caja = QtWidgets.QVBoxLayout(grupo)
         self.lista = QtWidgets.QListWidget()
         self.lista.setAlternatingRowColors(True)
@@ -458,7 +465,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.boton_lib.setText("Archivo")
         self.boton_lib.setMenu(self.menu_lib)
         self.boton_lib.setPopupMode(
-            QtWidgets.QToolButton.InstantPopup)
+            enum(QtWidgets.QToolButton, "ToolButtonPopupMode",
+                 "InstantPopup"))
         fila.addWidget(self.boton_lib)
         return grupo
 
@@ -920,7 +928,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         sugerido = self.controller.firma_actual.name
         nombre, aceptado = QtWidgets.QInputDialog.getText(
             self, "Guardar firma", "Nombre:",
-            QtWidgets.QLineEdit.Normal, sugerido)
+            enum(QtWidgets.QLineEdit, "EchoMode", "Normal"), sugerido)
         if aceptado and nombre.strip():
             self.controller.save_current(nombre.strip())
 
@@ -934,7 +942,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             return
         nombre, aceptado = QtWidgets.QInputDialog.getText(
             self, "Renombrar firma", "Nuevo nombre:",
-            QtWidgets.QLineEdit.Normal, actual)
+            enum(QtWidgets.QLineEdit, "EchoMode", "Normal"), actual)
         if aceptado:
             self.controller.rename_signature(actual, nombre.strip())
 
@@ -947,7 +955,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         if self._bloqueado:
             return
         self.controller.set_signature_visible(
-            item.text(), item.checkState() == Qt.Checked)
+            item.text(), item.checkState() == _MARCADO)
 
     def _refrescar_lista(self):
         self._bloqueado = True
@@ -955,8 +963,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.lista.clear()
         for firma in self.controller.library:
             item = QtWidgets.QListWidgetItem(firma.name)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if firma.visible else Qt.Unchecked)
+            item.setFlags(
+                item.flags() | enum(Qt, "ItemFlag",
+                                    "ItemIsUserCheckable"))
+            item.setCheckState(_MARCADO if firma.visible else _SIN_MARCAR)
             if firma.color:
                 # La fila se pinta del color de su curva: es como el usuario
                 # relaciona la lista con el grafico sin leer la leyenda.

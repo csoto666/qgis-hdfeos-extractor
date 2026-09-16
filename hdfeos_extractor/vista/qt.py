@@ -50,18 +50,21 @@ except ImportError:                       # pragma: no cover
                 "deberia pasar; fuera, hace falta PyQt5 o PyQt6.")
 
 
-def enum(raiz, grupo, nombre):
-    """Resuelve un enum de Qt en Qt5 y en Qt6.
+# La regla de resolucion vive en ``compat``, que no importa nada: la
+# necesita tambien el algoritmo de Processing, que no importa Qt.
+from ..compat import enum                                        # noqa: E402
 
-    Qt6 metio los enums dentro de su propia clase -``Qt.PenStyle.DashLine``-
-    mientras que en Qt5 cuelgan del espacio de nombres -``Qt.DashLine``-.
-    QGIS se compila contra los dos segun la version, asi que el plugin no
-    puede elegir uno.
-    """
-    if hasattr(raiz, grupo):
-        return getattr(getattr(raiz, grupo), nombre)
-    return getattr(raiz, nombre)
+#: Enums que se usan en varios sitios. Resolverlos una vez aqui evita repetir
+#: la llamada -y el nombre del grupo, que es lo que se escribe mal- en cada
+#: uso, y deja el codigo tan legible como con la forma plana de Qt5.
+HORIZONTAL = enum(Qt, "Orientation", "Horizontal")
+VERTICAL = enum(Qt, "Orientation", "Vertical")
+
+
+def politica(nombre):
+    """Una politica de tamano por su nombre. En Qt6 vive en ``Policy``."""
+    return enum(QtWidgets.QSizePolicy, "Policy", nombre)
 
 
 __all__ = ["QtCore", "QtGui", "QtWidgets", "Qt", "pyqtSignal", "enum",
-           "DENTRO_DE_QGIS"]
+           "politica", "HORIZONTAL", "VERTICAL", "DENTRO_DE_QGIS"]

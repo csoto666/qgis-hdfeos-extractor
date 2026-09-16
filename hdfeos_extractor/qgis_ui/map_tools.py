@@ -38,7 +38,7 @@ from qgis.core import (QgsCoordinateReferenceSystem,
                        QgsProject, QgsWkbTypes)
 from qgis.gui import QgsMapTool, QgsRubberBand
 
-from ..vista.qt import QtGui, Qt, pyqtSignal
+from ..vista.qt import QtGui, Qt, enum, pyqtSignal
 
 # Los modos se definen en la vista del cubo, que no depende de QGIS, para que
 # el cubo y el mapa usen exactamente los mismos.
@@ -54,6 +54,12 @@ COLOR_AREA = QtGui.QColor(0, 160, 255)
 #: transecto por cada pixel recorrido y la interfaz se congela persiguiendo
 #: posiciones que el usuario ya dejo atras.
 INTERVALO_MINIMO = 0.05
+
+
+#: Tipos de geometria de las marcas. En Qt6 y en QGIS reciente viven dentro
+#: de GeometryType; resolverlos aqui una vez deja las llamadas legibles.
+GEOM_POLIGONO = enum(QgsWkbTypes, "GeometryType", "PolygonGeometry")
+GEOM_LINEA = enum(QgsWkbTypes, "GeometryType", "LineGeometry")
 
 
 class HerramientaExplorar(QgsMapTool):
@@ -75,18 +81,18 @@ class HerramientaExplorar(QgsMapTool):
         self._arrastre = None                # esquina inicial del rectangulo
         self.seleccion = []                  # pixeles sueltos, en modo multi
 
-        self.marca_pixel = self._banda(QgsWkbTypes.PolygonGeometry,
+        self.marca_pixel = self._banda(GEOM_POLIGONO,
                                        COLOR_PIXEL, 2)
-        self.marca_linea = self._banda(QgsWkbTypes.LineGeometry,
+        self.marca_linea = self._banda(GEOM_LINEA,
                                        COLOR_LINEA, 2)
-        self.marca_area = self._banda(QgsWkbTypes.PolygonGeometry,
+        self.marca_area = self._banda(GEOM_POLIGONO,
                                       COLOR_AREA, 2)
 
     def _banda(self, tipo, color, ancho):
         banda = QgsRubberBand(self.canvas, tipo)
         banda.setColor(color)
         banda.setWidth(ancho)
-        if tipo == QgsWkbTypes.PolygonGeometry:
+        if tipo == GEOM_POLIGONO:
             relleno = QtGui.QColor(color)
             relleno.setAlpha(45)
             banda.setFillColor(relleno)
@@ -99,13 +105,14 @@ class HerramientaExplorar(QgsMapTool):
             self.seleccion = []
         self.limpiar_marcas(pixel=(modo != MODO_PIXEL))
         self.canvas.setCursor(QtGui.QCursor(
-            Qt.CrossCursor if modo == MODO_PIXEL else Qt.SizeAllCursor))
+            enum(Qt, "CursorShape", "CrossCursor") if modo == MODO_PIXEL
+            else enum(Qt, "CursorShape", "SizeAllCursor")))
 
     def limpiar_marcas(self, pixel=True):
         if pixel:
-            self.marca_pixel.reset(QgsWkbTypes.PolygonGeometry)
-        self.marca_linea.reset(QgsWkbTypes.LineGeometry)
-        self.marca_area.reset(QgsWkbTypes.PolygonGeometry)
+            self.marca_pixel.reset(GEOM_POLIGONO)
+        self.marca_linea.reset(GEOM_LINEA)
+        self.marca_area.reset(GEOM_POLIGONO)
 
     # -- conversion ---------------------------------------------------------
     def _a_pixel(self, evento):
@@ -250,7 +257,7 @@ class HerramientaExplorar(QgsMapTool):
         Se usan las cuatro esquinas y no un rectangulo alineado con los ejes
         porque con una escena rotada el pixel no es un rectangulo.
         """
-        self.marca_pixel.reset(QgsWkbTypes.PolygonGeometry)
+        self.marca_pixel.reset(GEOM_POLIGONO)
         esquinas = self.controller.geo.pixel_bbox(x, y)
         puntos = [self._reproyectar(mx, my) for mx, my in esquinas]
         self.marca_pixel.setToGeometry(
@@ -261,7 +268,7 @@ class HerramientaExplorar(QgsMapTool):
         cubo = self.controller.cube
         if cubo is None:
             return
-        self.marca_linea.reset(QgsWkbTypes.LineGeometry)
+        self.marca_linea.reset(GEOM_LINEA)
         if eje == MODO_X:
             extremos = [(posicion, 0), (posicion, cubo.lines - 1)]
         else:
@@ -274,7 +281,7 @@ class HerramientaExplorar(QgsMapTool):
         x1, y1 = fin
         xs, xe = sorted((x0, x1))
         ys, ye = sorted((y0, y1))
-        self.marca_area.reset(QgsWkbTypes.PolygonGeometry)
+        self.marca_area.reset(GEOM_POLIGONO)
         esquinas = [(xs, ys), (xe + 1, ys), (xe + 1, ye + 1), (xs, ye + 1)]
         puntos = [self._reproyectar(
             *self.controller.geo.to_map(c, f, centro=False))

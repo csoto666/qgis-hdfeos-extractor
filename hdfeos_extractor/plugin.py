@@ -39,8 +39,16 @@ import os
 from qgis.core import QgsApplication
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
 
+# Qt6 se llevo QAction de QtWidgets a QtGui. El puente de QGIS lo reexporta
+# en el sitio viejo, asi que dentro de QGIS las dos formas funcionan; se
+# prueba primero la nueva para no depender de esa cortesia.
+try:
+    from qgis.PyQt.QtGui import QAction
+except ImportError:                       # pragma: no cover - Qt5
+    from qgis.PyQt.QtWidgets import QAction
+
+from .compat import enum
 from .proveedor import HdfEosProveedor
 
 MENU = "&HDF-EOS"
@@ -104,7 +112,7 @@ class HdfEosPlugin(object):
             self.dock = HyperspectralDock(self.iface,
                                           self.iface.mainWindow())
             self.dock.visibilityChanged.connect(self._visibilidad_cambiada)
-            self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock)
+            self.iface.addDockWidget(enum(Qt, "DockWidgetArea", "RightDockWidgetArea"), self.dock)
         self.dock.show()
         self.dock.raise_()
 

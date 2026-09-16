@@ -189,6 +189,21 @@ ceros estiran el rango y el terreno queda aplastado en una banda de grises.
 Al acercarse se recalculan **el realce y la escala de color sobre lo visible**,
 y la barra de color a la derecha del cubo dice en qué valores está.
 
+## Qt5 y Qt6
+
+QGIS se está moviendo a Qt6, y ahí los enums sin calificar —`Qt.Horizontal`,
+`QSizePolicy.Expanding`— dejaron de existir. No fallan al importar: fallan al
+abrir el panel, a media construcción de la interfaz.
+
+Todos pasan por un resolutor que prueba la forma calificada primero y deja la
+plana de respaldo, así que el mismo código corre en QGIS 3.16 y en Qt6. Dos
+comprobaciones lo sostienen, y las dos están en `verificar.sh` y en CI:
+
+- **`tests/test_qt6.py`** lee el árbol sintáctico del complemento entero y
+  falla si encuentra un solo enum sin calificar.
+- **`comprobar_qt6.py`** construye la interfaz con PyQt6 de verdad y la
+  dibuja. Lo que el detector estático no vea, se cae al pintar.
+
 ## La proyección: de dónde salen las coordenadas
 
 Es el error más caro de los datos geoespaciales porque no se ve: una capa mal

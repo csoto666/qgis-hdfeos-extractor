@@ -36,7 +36,8 @@ No importa QGIS -solo Qt-, asi que se puede probar sin abrirlo.
 
 from .cube_view import (CubeView, MODO_AREA, MODO_MULTI, MODO_PAN, MODO_PIXEL,
                         MODO_X, MODO_Y, MODO_ZOOM)
-from .qt import QtWidgets, Qt, enum, pyqtSignal
+from .qt import (HORIZONTAL, QtWidgets, Qt, enum, politica,
+                 pyqtSignal)
 
 #: Las siete herramientas, en el orden en que se ofrecen. Las dos primeras
 #: solo cambian que parte se mira; las cinco siguientes miden algo.
@@ -155,8 +156,7 @@ class PanelCubo(QtWidgets.QWidget):
         marco = QtWidgets.QWidget()
         marco.setMaximumWidth(ANCHO_COLUMNA + 16)
         marco.setMinimumWidth(ANCHO_COLUMNA_MIN + 16)
-        marco.setSizePolicy(QtWidgets.QSizePolicy.Maximum,
-                            QtWidgets.QSizePolicy.Preferred)
+        marco.setSizePolicy(politica("Maximum"), politica("Preferred"))
         columna = QtWidgets.QVBoxLayout(marco)
         columna.setContentsMargins(0, 0, 0, 0)
         columna.setSpacing(6)
@@ -164,7 +164,7 @@ class PanelCubo(QtWidgets.QWidget):
         area = QtWidgets.QScrollArea()
         area.setWidget(self._columna_herramientas())
         area.setWidgetResizable(True)
-        area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        area.setFrameShape(enum(QtWidgets.QFrame, "Shape", "NoFrame"))
         area.setHorizontalScrollBarPolicy(
             enum(Qt, "ScrollBarPolicy", "ScrollBarAlwaysOff"))
         columna.addWidget(area, 1)
@@ -225,8 +225,8 @@ class PanelCubo(QtWidgets.QWidget):
             boton.setText(texto)
             boton.setCheckable(True)
             boton.setToolTip(ayuda)
-            boton.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
-                                QtWidgets.QSizePolicy.Preferred)
+            boton.setSizePolicy(politica("Expanding"),
+                                politica("Preferred"))
             self.grupo_herramientas.addButton(boton)
             # Dos por fila; las de navegacion quedan juntas arriba.
             rejilla.addWidget(boton, i // 2, i % 2)
@@ -256,10 +256,11 @@ class PanelCubo(QtWidgets.QWidget):
         self.boton_bandas_rgb.setCheckable(True)
         self.boton_bandas_rgb.setToolTip("Elegir las bandas una por una")
         self.boton_bandas_rgb.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+            politica("Expanding"), politica("Preferred"))
         columna.addWidget(self.boton_bandas_rgb)
         self.resumen_rgb = QtWidgets.QLabel("-")
-        self.resumen_rgb.setAlignment(Qt.AlignCenter)
+        self.resumen_rgb.setAlignment(
+            enum(Qt, "AlignmentFlag", "AlignCenter"))
         self.resumen_rgb.setToolTip("Bandas que alimentan la imagen")
         columna.addWidget(self.resumen_rgb)
 
@@ -270,7 +271,7 @@ class PanelCubo(QtWidgets.QWidget):
         self.controles_banda = {}
         for n, (canal, etiqueta) in enumerate(
                 (("red", "R"), ("green", "G"), ("blue", "B"))):
-            deslizador = QtWidgets.QSlider(Qt.Horizontal)
+            deslizador = QtWidgets.QSlider(HORIZONTAL)
             deslizador.setMinimum(0)
             numero = QtWidgets.QSpinBox()
             numero.setMinimum(0)

@@ -17,7 +17,7 @@ echo "== pruebas =="
 python3 -m pytest -q
 
 echo "== pyflakes =="
-python3 -m pyflakes hdfeos_extractor
+python3 -m pyflakes hdfeos_extractor comprobar_qt6.py
 
 echo "== pycodestyle =="
 # lector.py y proveedor.py quedan fuera: traen dos lineas largas de la
@@ -25,12 +25,19 @@ echo "== pycodestyle =="
 # sin arreglar nada.
 python3 -m pycodestyle --max-line-length=80 \
     hdfeos_extractor/core hdfeos_extractor/vista \
-    hdfeos_extractor/qgis_ui hdfeos_extractor/examples
+    hdfeos_extractor/qgis_ui hdfeos_extractor/examples \
+    hdfeos_extractor/compat.py comprobar_qt6.py
 # E402 en las pruebas: varias empiezan con pytest.importorskip para saltarse
 # el modulo cuando falta una dependencia opcional, y eso obliga a importar
 # despues. Es la forma que pytest documenta.
 python3 -m pycodestyle --max-line-length=80 --ignore=E402 \
     hdfeos_extractor/tests
+
+echo "== la interfaz se construye con Qt6 =="
+# Aparte de la suite a proposito: la vinculacion de Qt se elige una vez por
+# proceso, y mezclar PyQt5 y PyQt6 en la misma sesion de pytest no da un
+# resultado dudoso, da una caida. Sin PyQt6 instalado, avisa y se aparta.
+python3 comprobar_qt6.py
 
 echo "== la demo corre de punta a punta =="
 python3 hdfeos_extractor/examples/demo_cube.py > /dev/null

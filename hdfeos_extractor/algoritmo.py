@@ -32,18 +32,22 @@ from qgis.core import (
     QgsProcessingParameterString,
 )
 
+from .compat import enum
 from .lector import Escena, ErrorLectura, LINEAS_BLOQUE
 
 # Enums calificados en QGIS reciente, planos en versiones previas. Se resuelve
-# una sola vez aca para no repetir el try/except en cada parametro.
-try:
-    _ARCHIVO = QgsProcessingParameterFile.Behavior.File
-except AttributeError:                                  # QGIS < 3.30
-    _ARCHIVO = QgsProcessingParameterFile.File
-try:
-    _ENTERO = QgsProcessingParameterNumber.Type.Integer
-except AttributeError:
-    _ENTERO = QgsProcessingParameterNumber.Integer
+# una sola vez aca para no repetir la llamada en cada parametro.
+#
+# Va por ``enum`` y no por un try/except aunque el try/except funcionaba: el
+# verificador de compatibilidad con Qt6 del repositorio de complementos lee el
+# codigo sin ejecutarlo, ve el nombre plano de la rama de respaldo y marca el
+# archivo, sin manera de saber que esa rama solo corre en QGIS antiguo. Con
+# los nombres en cadenas no hay nada plano que ver, y el comportamiento es el
+# mismo.
+_ARCHIVO = enum(QgsProcessingParameterFile, "Behavior", "File")
+_ENTERO = enum(QgsProcessingParameterNumber, "Type", "Integer")
+_AVANZADO = enum(QgsProcessingParameterNumber, "Flag",
+                 "FlagAdvanced")
 
 
 class ExtraerHdfEosAlgoritmo(QgsProcessingAlgorithm):
@@ -165,11 +169,7 @@ class ExtraerHdfEosAlgoritmo(QgsProcessingAlgorithm):
     @staticmethod
     def _avanzado(parametro):
         """Marca un parametro como avanzado, con enums de cualquier version."""
-        try:
-            banderas = QgsProcessingParameterNumber.Flag.FlagAdvanced
-        except AttributeError:                          # QGIS < 3.30
-            banderas = QgsProcessingParameterNumber.FlagAdvanced
-        parametro.setFlags(parametro.flags() | banderas)
+        parametro.setFlags(parametro.flags() | _AVANZADO)
 
     # -- ejecucion -----------------------------------------------------------
     def processAlgorithm(self, parameters, context, feedback):
