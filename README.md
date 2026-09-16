@@ -276,6 +276,26 @@ bandas de 8 bits más una de transparencia, así que el relleno no tapa el mapa
 de fondo. Sirve para digitalizar encima o componer un mapa mientras se sigue
 midiendo espectros en el cubo, al lado.
 
+## Vincular el cubo con el mapa
+
+En el cubo se ve el detalle espectral pero no el contexto; en el mapa está el
+contexto —una ortofoto de alta resolución, el catastro— pero no el espectro.
+**Vincular con el mapa** hace que los dos miren lo mismo: al acercarse o
+desplazarse en uno, el otro va detrás. Lo que se está midiendo deja de ser un
+parche de colores y pasa a ser un sitio reconocible.
+
+Necesita que la escena esté georreferenciada; si no, el botón se queda
+apagado y la barra de estado dice por qué. Con una escena en geometría de
+sensor funciona, pero la correspondencia es un ajuste por mínimos cuadrados y
+se avisa: sirve para navegar, no para medir sobre el mapa.
+
+Lo difícil aquí no es la geometría sino el **bucle**: cada lado avisa de sus
+cambios y ese aviso mueve al otro, que avisa a su vez. Se corta por dos vías
+—una bandera mientras dura la sincronización, y una comparación que ignora
+los movimientos despreciables— porque cada una se escapa en un caso distinto.
+La prueba que lo cubre falla con `RecursionError` si se quita cualquiera de
+las dos.
+
 ## La composición RGB se elige por longitud de onda
 
 No por número de banda. Es lo que vuelve portables los presets: `rojo = 665 nm`

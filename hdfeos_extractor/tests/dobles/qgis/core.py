@@ -167,6 +167,36 @@ class QgsMultiBandColorRenderer(object):
         self.azul = realce
 
 
+class QgsRectangle(object):
+    """Una extension rectangular, con lo justo para el vinculo de vistas."""
+
+    def __init__(self, xmin=0.0, ymin=0.0, xmax=0.0, ymax=0.0):
+        self._x0, self._y0 = float(xmin), float(ymin)
+        self._x1, self._y1 = float(xmax), float(ymax)
+
+    def xMinimum(self):
+        return self._x0
+
+    def yMinimum(self):
+        return self._y0
+
+    def xMaximum(self):
+        return self._x1
+
+    def yMaximum(self):
+        return self._y1
+
+    def width(self):
+        return self._x1 - self._x0
+
+    def height(self):
+        return self._y1 - self._y0
+
+    def __repr__(self):
+        return ("QgsRectangle(%.3f, %.3f, %.3f, %.3f)"
+                % (self._x0, self._y0, self._x1, self._y1))
+
+
 class QgsCsException(Exception):
     """Lo que QGIS lanza cuando una reproyeccion no es posible."""
 
@@ -177,6 +207,11 @@ class QgsCoordinateTransform(object):
 
     def transform(self, punto):
         return punto
+
+    def transformBoundingBox(self, rect):
+        # El doble no reproyecta: devuelve la misma caja. Basta para probar
+        # el vinculo, cuya geometria es la de la escena, no la del SRC.
+        return rect
 
 
 class QgsPointXY(object):

@@ -85,6 +85,8 @@ class PanelCubo(QtWidgets.QWidget):
     envioPedido = pyqtSignal()
     #: Pidio soltar el cubo a una ventana aparte, o volver a empotrarlo.
     soltarPedido = pyqtSignal(bool)
+    #: Pidio vincular -o desvincular- la vista con el lienzo de QGIS.
+    vinculoPedido = pyqtSignal(bool)
     #: Se cerro la ventana suelta.
     cerrada = pyqtSignal()
 
@@ -208,6 +210,17 @@ class PanelCubo(QtWidgets.QWidget):
             "pantalla. Cerrar esa ventana lo devuelve aca.")
         self.boton_soltar.toggled.connect(self.soltarPedido.emit)
         columna.addWidget(self.boton_soltar)
+
+        self.boton_vinculo = QtWidgets.QPushButton("Vincular con el mapa")
+        self.boton_vinculo.setCheckable(True)
+        self.boton_vinculo.setToolTip(
+            "Hace que el cubo y el mapa de QGIS miren lo mismo: al\n"
+            "acercarse o desplazarse en uno, el otro va detras.\n"
+            "Sirve para reconocer sobre una ortofoto lo que se esta\n"
+            "midiendo en el cubo. Necesita que la escena este\n"
+            "georreferenciada.")
+        self.boton_vinculo.toggled.connect(self.vinculoPedido.emit)
+        columna.addWidget(self.boton_vinculo)
         return grupo
 
     def _grupo_herramientas(self):
@@ -317,7 +330,8 @@ class PanelCubo(QtWidgets.QWidget):
         for w in (self.combo_preset, self.combo_realce, self.combo_paleta,
                   self.boton_rgb, self.boton_bandas_rgb, self.boton_acercar,
                   self.boton_alejar, self.boton_todo, self.boton_datos,
-                  self.boton_enviar, self.boton_soltar):
+                  self.boton_enviar, self.boton_soltar,
+                  self.boton_vinculo):
             w.setEnabled(activo)
 
     def closeEvent(self, evento):

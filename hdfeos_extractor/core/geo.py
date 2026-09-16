@@ -146,6 +146,47 @@ class GeoTransform(object):
     def contiene(self, col, fila, samples, lines):
         return 0 <= col < samples and 0 <= fila < lines
 
+    # -- ventanas -----------------------------------------------------------
+    def bbox_de_ventana(self, ventana):
+        """Ventana de pixeles -> caja envolvente en coordenadas de mapa.
+
+        La ventana llega con los extremos DENTRO -el pixel x1 se ve-, asi que
+        el borde derecho del recorte es la esquina de x1+1. Restar ese uno
+        deja fuera la ultima columna y la ultima fila, que es justo el error
+        que al vincular vistas se acumula zoom tras zoom.
+
+        Se calculan las cuatro esquinas y no dos opuestas porque con rotacion
+        el rectangulo de pixeles es un rombo en el terreno: su caja
+        envolvente necesita las cuatro.
+        """
+        x0, y0, x1, y1 = [int(v) for v in ventana]
+        esquinas = [self.to_map(c, f, centro=False)
+                    for c, f in ((x0, y0), (x1 + 1, y0),
+                                 (x1 + 1, y1 + 1), (x0, y1 + 1))]
+        xs = [p[0] for p in esquinas]
+        ys = [p[1] for p in esquinas]
+        return (min(xs), min(ys), max(xs), max(ys))
+
+    def ventana_de_bbox(self, bbox, samples, lines):
+        """Caja en coordenadas de mapa -> ventana de pixeles, recortada.
+
+        Devuelve None cuando la caja no toca la escena: es lo que hay que
+        distinguir de "la escena entera" para no saltar al verlo todo cuando
+        el usuario se va con el mapa a otro continente.
+        """
+        xmin, ymin, xmax, ymax = bbox
+        esquinas = [self.to_pixel(x, y, redondear=False)
+                    for x, y in ((xmin, ymin), (xmax, ymin),
+                                 (xmax, ymax), (xmin, ymax))]
+        cols = [p[0] for p in esquinas]
+        filas = [p[1] for p in esquinas]
+        x0, x1 = int(np.floor(min(cols))), int(np.ceil(max(cols))) - 1
+        y0, y1 = int(np.floor(min(filas))), int(np.ceil(max(filas))) - 1
+        if x1 < 0 or y1 < 0 or x0 > samples - 1 or y0 > lines - 1:
+            return None
+        return (max(0, x0), max(0, y0),
+                min(samples - 1, x1), min(lines - 1, y1))
+
     def __repr__(self):
         return ("<GeoTransform origen=(%.4f, %.4f) pixel=%.4gx%.4g%s>"
                 % (self.gt[0], self.gt[3], self.tamano_pixel[0],

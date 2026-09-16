@@ -20,6 +20,7 @@ from dobles import instalar_si_falta_qgis
 instalar_si_falta_qgis()
 
 from PyQt5 import QtWidgets
+from PyQt5.QtCore import pyqtSignal
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +31,31 @@ def app():
 
 
 class FalsoCanvas(QtWidgets.QWidget):
-    """Lo minimo que la herramienta de mapa le pide al lienzo."""
+    """Lo minimo que la herramienta de mapa le pide al lienzo.
+
+    Lleva extension y senal de cambio porque el vinculo de vistas las usa:
+    sin ellas no se puede probar que los dos lados se sigan, que es justo la
+    parte donde es facil montar un bucle sin fin.
+    """
+
+    extentsChanged = pyqtSignal()
+
+    def __init__(self, *args, **kwargs):
+        super(FalsoCanvas, self).__init__(*args, **kwargs)
+        from qgis.core import QgsRectangle
+        self._extent = QgsRectangle(0.0, 0.0, 1.0, 1.0)
+        self.refrescos = 0
+
+    def extent(self):
+        return self._extent
+
+    def setExtent(self, rect):
+        self._extent = rect
+        # QGIS avisa del cambio, y ese aviso es el que puede rebotar.
+        self.extentsChanged.emit()
+
+    def refresh(self):
+        self.refrescos += 1
 
     def setMapTool(self, herramienta):
         self.herramienta = herramienta

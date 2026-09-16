@@ -49,6 +49,7 @@ from . import map_tools
 from .controller import SpatialSpectralController
 from .exportar import ErrorExportar, enviar_vista
 from .render import aplicar_composicion
+from .vinculo import VinculoVistas
 
 ETIQUETAS_REALCE = {
     "percentil": "Percentil 2-98",
@@ -132,6 +133,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self._bloqueado = False        # corta los bucles de senales
         self.divisor = None            # existe recien en _construir
         self._cubo_suelto = False
+        self.vinculo = None            # necesita el cubo, que aun no existe
 
         self.setObjectName("HyperspectralExplorerDock")
         self.setWidget(self._construir())
@@ -238,6 +240,38 @@ class HyperspectralDock(QtWidgets.QDockWidget):
     def resizeEvent(self, evento):
         super(HyperspectralDock, self).resizeEvent(evento)
         self._orientar_divisor()
+
+    # -- vinculo con el lienzo ----------------------------------------------
+    def _vincular(self, encender):
+        """Enciende o apaga el seguimiento entre el cubo y el mapa.
+
+        El boton se desmarca solo si no se pudo: dejarlo hundido sobre un
+        vinculo que no existe es la clase de mentira que hace desconfiar de
+        todo lo demas.
+        """
+        if self.vinculo is None:
+            return
+        motivo = self.vinculo.activar(encender)
+        if encender and not self.vinculo.activo:
+            boton = self.panel_cubo.boton_vinculo
+            boton.blockSignals(True)
+            boton.setChecked(False)
+            boton.blockSignals(False)
+        self._avisar(motivo)
+
+    def _soltar_vinculo(self):
+        """Apaga el vinculo al cerrar o cambiar de escena.
+
+        Sin esto queda escuchando al lienzo con un cubo que ya no esta, y el
+        primer desplazamiento del mapa busca una ventana en una escena
+        cerrada.
+        """
+        if self.vinculo is not None and self.vinculo.activo:
+            self.vinculo.activar(False)
+            boton = self.panel_cubo.boton_vinculo
+            boton.blockSignals(True)
+            boton.setChecked(False)
+            boton.blockSignals(False)
 
     # -- soltar y empotrar el cubo ------------------------------------------
     def _soltar_cubo(self, suelto):
@@ -479,6 +513,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.panel_cubo.envioPedido.connect(self._enviar_a_qgis)
         self.panel_cubo.boton_enviar.clicked.connect(self._enviar_a_qgis)
         self.panel_cubo.soltarPedido.connect(self._soltar_cubo)
+        self.vinculo = VinculoVistas(self.cubo, self.canvas, self.controller,
+                                     self)
+        self.panel_cubo.vinculoPedido.connect(self._vincular)
         # Mover el panel de costado a abajo cambia que reparto conviene, y
         # no pasa por resizeEvent con la forma final: hay que escucharlo.
         self.dockLocationChanged.connect(lambda _area:
@@ -635,6 +672,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             self.controller.close_cube()
             self._habilitar(False)
             return
+        self._soltar_vinculo()
         self.controller.set_cube(cubo, capa, georreferencia_de(cubo, capa))
         self.cubo.set_cube(cubo, self.controller.composer)
         self.cubo.unidad = ("reflectancia" if cubo.scale or cubo.aplicar_escala
@@ -697,6 +735,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             deslizador.setEnabled(activo)
             numero.setEnabled(activo)
         self.panel_cubo.habilitar(activo)
+        # Vincular necesita ademas saber donde esta la escena; sin eso el
+        # boton se queda apagado y su ayuda explica por que.
+        se_puede = activo and self.controller.georref.tiene_mapa
+        self.panel_cubo.boton_vinculo.setEnabled(se_puede)
 
     # -- herramienta de mapa ------------------------------------------------
     def _enviar_a_qgis(self):
@@ -1028,6 +1070,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
     # -- cierre -------------------------------------------------------------
     def closeEvent(self, evento):
+        self._soltar_vinculo()
         if self._cubo_suelto:
             # Suelta, la ventana del cubo es hija de nadie: cerrar el panel
             # la dejaria flotando sin dueno y sin forma de recuperarla.
