@@ -89,3 +89,43 @@ jobs:
             gh release create "$TAG" hdfeos_extractor-*.zip \
               --target "$GITHUB_SHA" --title "$TAG" --notes "$NOTAS"
           fi
+
+      # Sube el MISMO ZIP que acaba de quedar en el Release, no uno armado
+      # aparte: lo que se publica y lo que se instala desde QGIS tienen que
+      # ser byte por byte el mismo archivo, que es el que paso las pruebas
+      # de paquete unos pasos mas arriba.
+      #
+      # El token se crea en plugins.qgis.org, en la pagina del complemento, y
+      # se guarda como secreto QGIS_PLUGIN_TOKEN del repositorio. Sin el
+      # secreto este paso se salta y la publicacion en GitHub sigue siendo
+      # valida: se puede subir a mano como siempre.
+      - name: Subir al repositorio de complementos de QGIS
+        env:
+          QGIS_PLUGIN_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
+          PAQUETE: hdfeos_extractor
+        run: |
+          if [ -z "$QGIS_PLUGIN_TOKEN" ]; then
+            echo "Sin QGIS_PLUGIN_TOKEN: no se sube a plugins.qgis.org."
+            echo "Crea el token en la pagina del complemento y guardalo en"
+            echo "Settings > Secrets and variables > Actions."
+            exit 0
+          fi
+          ZIP=$(ls hdfeos_extractor-*.zip)
+          echo "Subiendo $ZIP a plugins.qgis.org"
+          # Se captura el codigo y el cuerpo por separado. El sitio responde
+          # los errores de validacion en el cuerpo -version repetida, ZIP mal
+          # formado, token de otro complemento- y sin imprimirlo el fallo
+          # queda en un numero suelto que no dice que arreglar.
+          CODIGO=$(curl -sS -w '%{http_code}' -o respuesta.json \
+            -H "Authorization: Bearer $QGIS_PLUGIN_TOKEN" \
+            -F "package=@$ZIP" \
+            "https://plugins.qgis.org/plugins/api/$PAQUETE/version/add/")
+          echo "HTTP $CODIGO"
+          cat respuesta.json || true
+          echo
+          if [ "$CODIGO" -lt 200 ] || [ "$CODIGO" -ge 300 ]; then
+            echo "La subida fallo. El Release de GitHub si quedo publicado:"
+            echo "se puede reintentar subiendo ese mismo ZIP a mano."
+            exit 1
+          fi
+          echo "Publicado en https://plugins.qgis.org/plugins/$PAQUETE/"

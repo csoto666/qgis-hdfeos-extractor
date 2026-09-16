@@ -189,6 +189,38 @@ ceros estiran el rango y el terreno queda aplastado en una banda de grises.
 Al acercarse se recalculan **el realce y la escala de color sobre lo visible**,
 y la barra de color a la derecha del cubo dice en qué valores está.
 
+## Publicar una versión
+
+El ciclo completo, desde un cambio hasta que aparece en el gestor de
+complementos de QGIS:
+
+1. Subir la versión en `hdfeos_extractor/metadata.txt` y describir el cambio
+   en su `changelog`. Esa es la fuente: el ZIP toma de ahí su nombre y la
+   etiqueta del *Release* tiene que coincidir.
+2. `./verificar.sh` — pruebas, estilo, Qt6 y la demo.
+3. Empujar a `main` y esperar a CI.
+4. Lanzar el flujo **publicar** desde la pestaña *Actions*. Arma el ZIP,
+   crea el *Release* y, si está el secreto, lo sube a plugins.qgis.org.
+
+El secreto se llama **`QGIS_PLUGIN_TOKEN`**. Se crea en la página del
+complemento en plugins.qgis.org y se guarda en *Settings → Secrets and
+variables → Actions*. Sin él, el paso de subida se salta con un aviso y el
+*Release* de GitHub se publica igual: siempre queda la vía manual.
+
+Se sube **el mismo ZIP** que queda adjunto al *Release*, no uno armado
+aparte. Lo que se descarga de GitHub y lo que se instala desde QGIS tienen
+que ser byte por byte el mismo archivo, y es el que pasó las pruebas de
+paquete.
+
+### Las pruebas del paquete
+
+`tests/test_paquete.py` comprueba la forma del ZIP, y dos de sus pruebas
+existen por un fallo concreto: se publicó una versión sin uno de los módulos
+porque el empaquetador tenía la lista escrita a mano. Ahora una compara el
+ZIP contra los archivos **en disco** y la otra exige que todos los imports
+relativos resuelvan dentro del ZIP. Una lista no puede comprobar a otra
+lista.
+
 ## Qt5 y Qt6
 
 QGIS se está moviendo a Qt6, y ahí los enums sin calificar —`Qt.Horizontal`,
