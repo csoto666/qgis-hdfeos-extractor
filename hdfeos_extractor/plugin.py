@@ -112,7 +112,9 @@ class HdfEosPlugin(object):
             self.dock = HyperspectralDock(self.iface,
                                           self.iface.mainWindow())
             self.dock.visibilityChanged.connect(self._visibilidad_cambiada)
-            self.iface.addDockWidget(enum(Qt, "DockWidgetArea", "RightDockWidgetArea"), self.dock)
+            self.iface.addDockWidget(
+                enum(Qt, "DockWidgetArea", "RightDockWidgetArea"),
+                self.dock)
         self.dock.show()
         self.dock.raise_()
 
