@@ -20,10 +20,16 @@ SALIDA="$AQUI/$PAQUETE-$VERSION.zip"
 TEMP=$(mktemp -d)
 
 mkdir "$TEMP/$PAQUETE"
-# Solo lo que el plugin necesita en tiempo de ejecucion, mas LICENSE y README.
-# Las pruebas y los ejemplos no van: no los usa QGIS y engordan la descarga.
-for f in __init__.py plugin.py proveedor.py algoritmo.py lector.py \
-         metadata.txt icon.png icon.svg icono_explorador.png \
+# Los modulos van por comodin y no en una lista escrita a mano. La lista
+# estuvo, y paso lo que pasa con las listas escritas a mano: se agrego un
+# modulo nuevo -compat.py- y nadie la actualizo. El ZIP salio sin el y el
+# plugin no cargaba, con un ModuleNotFoundError en casa del usuario y las
+# pruebas en verde aqui.
+cp "$AQUI/$PAQUETE"/*.py "$TEMP/$PAQUETE/"
+# Lo que no es codigo si va enumerado: son cuatro archivos que cambian una
+# vez cada nunca, y un comodin aqui se llevaria cualquier cosa que quedara
+# suelta en la carpeta.
+for f in metadata.txt icon.png icon.svg icono_explorador.png \
          icono_explorador.svg; do
     cp "$AQUI/$PAQUETE/$f" "$TEMP/$PAQUETE/"
 done

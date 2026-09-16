@@ -15,6 +15,7 @@ peor lugar para enterarse.
 Estas pruebas comprueban esa forma aca, donde el error sale gratis.
 """
 
+import ast
 import os
 import shutil
 import subprocess
@@ -86,12 +87,81 @@ def test_estan_los_tres_subpaquetes_con_su_init(nombres):
         assert "%s/%s/__init__.py" % (PAQUETE, sub) in nombres, sub
 
 
-def test_el_nucleo_va_completo(nombres):
-    """Falta un modulo del nucleo y el plugin carga pero revienta al abrir el
-    panel, que es mas dificil de diagnosticar que no cargar."""
-    for modulo in ("cube", "envi", "hdf5", "geo", "rgb", "colormap",
-                   "spectral", "library", "sources"):
-        assert "%s/core/%s.py" % (PAQUETE, modulo) in nombres, modulo
+#: Carpetas que no viajan en el ZIP a proposito: QGIS no las usa y engordan
+#: la descarga.
+FUERA_DEL_PAQUETE = ("tests", "examples", "__pycache__")
+
+
+def modulos_en_disco():
+    """Todos los .py del complemento que deberian viajar en el ZIP."""
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    encontrados = set()
+    for carpeta, subs, ficheros in os.walk(raiz):
+        subs[:] = [d for d in subs if d not in FUERA_DEL_PAQUETE]
+        relativa = os.path.relpath(carpeta, os.path.dirname(raiz))
+        for fichero in ficheros:
+            if fichero.endswith(".py"):
+                encontrados.add(
+                    os.path.join(relativa, fichero).replace(os.sep, "/"))
+    return encontrados
+
+
+def test_no_falta_ningun_modulo(nombres):
+    """El ZIP tiene que llevar TODOS los modulos, comparados con el disco.
+
+    Antes esto era una lista escrita a mano, aqui y en el empaquetador, y
+    paso lo que pasa con las listas escritas a mano: se agrego compat.py y
+    ninguna de las dos se actualizo. El ZIP salio sin el modulo, estas
+    pruebas siguieron en verde -comprobaban la lista vieja contra un ZIP
+    armado con la misma lista vieja- y el plugin no cargaba en casa del
+    usuario, con un ModuleNotFoundError al llamar a classFactory.
+
+    Una lista no puede comprobar a otra lista. Esto compara contra el disco,
+    que es la unica fuente que no se olvida de actualizar nadie.
+    """
+    faltan = sorted(modulos_en_disco() - set(nombres))
+    detalle = "\n  ".join(faltan)
+    assert not faltan, "El ZIP no lleva estos modulos:\n  " + detalle
+
+
+def _destino_relativo(nombre_zip, nodo):
+    """A que ruta del ZIP apunta un ``from . / .. import`` dado.
+
+    Devuelve la lista de rutas aceptables: un modulo suelto o un subpaquete
+    con su __init__. Se devuelven las dos porque ``from .core import x`` vale
+    tanto si core es core.py como si es una carpeta.
+    """
+    partes = nombre_zip.split("/")[:-1]          # carpeta del archivo
+    for _ in range(nodo.level - 1):              # cada punto extra, un nivel
+        if partes:
+            partes.pop()
+    if nodo.module:
+        partes += nodo.module.split(".")
+    base = "/".join(partes)
+    return (base + ".py", base + "/__init__.py")
+
+
+def test_los_imports_relativos_apuntan_dentro_del_zip(zip_construido):
+    """Cada ``from .x import`` tiene que resolver a un archivo del ZIP.
+
+    Es la comprobacion que habla el mismo idioma que el error: lo que ve el
+    usuario cuando falta un modulo es un ModuleNotFoundError al cargar, y
+    eso es exactamente un import relativo que no resuelve. Leerlos todos
+    aqui es reproducir esa carga sin necesitar QGIS.
+    """
+    with zipfile.ZipFile(zip_construido) as z:
+        nombres = set(z.namelist())
+        rotos = []
+        for nombre in sorted(n for n in nombres if n.endswith(".py")):
+            arbol = ast.parse(z.read(nombre).decode("utf-8"), nombre)
+            for nodo in ast.walk(arbol):
+                if not isinstance(nodo, ast.ImportFrom) or not nodo.level:
+                    continue
+                destinos = _destino_relativo(nombre, nodo)
+                if not any(d in nombres for d in destinos):
+                    rotos.append("%s -> %s" % (nombre, destinos[0]))
+    detalle = "\n  ".join(rotos)
+    assert not rotos, "Imports que no resuelven dentro del ZIP:\n  " + detalle
 
 
 def test_classfactory_esta_donde_QGIS_lo_busca(zip_construido):
