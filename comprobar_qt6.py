@@ -101,7 +101,8 @@ def main():
     from hdfeos_extractor.vista.cube_view import (MODO_AREA, MODO_MULTI,
                                                   MODO_X, MODO_ZOOM)
     from hdfeos_extractor.vista.panel_cubo import PanelCubo
-    from hdfeos_extractor.vista.spectral_plot import SpectralPlot
+    from hdfeos_extractor.vista.spectral_plot import Curva, SpectralPlot
+    from hdfeos_extractor.vista import spectral_plot
 
     QtWidgets = puente.QtWidgets
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -117,9 +118,25 @@ def main():
 
         # El divisor es lo que empotra el cubo con el espectro, y su
         # orientacion es un enum: aqui se resuelve de verdad.
+        # El grafico con curvas de verdad. pyqtgraph es opcional y su
+        # compatibilidad con Qt6 depende de su version; cuando no carga, el
+        # lienzo propio dibuja lo mismo. Se dice cual de los dos se probo,
+        # porque "el grafico funciona" significa cosas distintas.
+        grafico = SpectralPlot()
+        longitudes = np.linspace(420.0, 2400.0, 60)
+        valores = 0.2 + 0.1 * np.sin(longitudes / 200.0)
+        valores[20:25] = np.nan            # un tramo descartado, que corta
+        grafico.set_curvas([
+            Curva("una", longitudes, valores, color="#d62728"),
+            Curva("otra", longitudes, valores * 0.6, color="#2ca02c",
+                  punteada=True)])
+        print("grafico espectral: %s"
+              % ("pyqtgraph %s" % getattr(spectral_plot.pg, "__version__", "?")
+                 if spectral_plot.pg is not None else "lienzo propio"))
+
         divisor = QtWidgets.QSplitter(puente.HORIZONTAL)
         divisor.addWidget(panel)
-        divisor.addWidget(SpectralPlot())
+        divisor.addWidget(grafico)
         divisor.resize(1100, 680)
         divisor.show()
         app.processEvents()
