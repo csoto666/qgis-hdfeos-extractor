@@ -35,12 +35,12 @@ implementada a mano sobre numpy, que si viene con QGIS, y ``to_xarray()``
 entrega el objeto xarray a quien lo tenga.
 """
 
-import collections
 import os
 
 import numpy as np
 
 from .bandas import MascaraBandas
+from .cache import CacheLRU
 from .envi import EnviError, EnviSource
 from .hdf5 import ErrorLectura, Hdf5Source, es_hdf5
 from .sources import GdalSource, MemorySource
@@ -49,7 +49,19 @@ from .sources import GdalSource, MemorySource
 # Tanager son unos 4 MB, asi que 12 son ~50 MB: suficiente para que mover los
 # tres selectores del compositor RGB no vuelva a tocar el disco, y poco como
 # para no incomodar a QGIS.
-BANDAS_EN_CACHE = 12
+#: Presupuestos de memoria de los tres caches, en megabytes. En bytes y no
+#: en piezas: doce bandas de una escena de 200x200 son tres megabytes y doce
+#: de un Tanager son veinticinco, asi que contar piezas deja el consumo a
+#: merced del tamano de la escena.
+#:
+#: Los numeros salen de medir el gesto que mas duele -mover la cruz sobre un
+#: HDF5 comprimido de 426 bandas-, que pide dos transectos de 1,3 MB cada
+#: uno. Con 48 MB entran unos treinta y cinco: un arrastre entero de ida y
+#: vuelta sin volver al disco.
+BANDAS_EN_CACHE_MB = 48
+TRANSECTOS_EN_CACHE_MB = 48
+#: Un espectro son unos pocos kilobytes; con 8 MB entran miles.
+ESPECTROS_EN_CACHE_MB = 8
 
 # Extensiones que se mandan derecho a GDAL en vez de intentar ENVI.
 EXT_GDAL = (".tif", ".tiff", ".jp2", ".vrt", ".nc", ".hdf", ".h5")
@@ -92,7 +104,13 @@ class HyperspectralCube(object):
         self.aplicar_escala = aplicar_escala
         self.lines, self.samples, self.bands = source.shape
 
-        self._cache = collections.OrderedDict()
+        # Tres caches y no uno: lo que se guarda tiene tamanos y vidas
+        # distintas -una banda pesa como un transecto entero y un espectro
+        # como nada-, y mezclarlos dejaria que una tanda de transectos
+        # desalojara las tres bandas del RGB, que es lo que se esta mirando.
+        self.cache_bandas = CacheLRU(BANDAS_EN_CACHE_MB)
+        self.cache_transectos = CacheLRU(TRANSECTOS_EN_CACHE_MB)
+        self.cache_espectros = CacheLRU(ESPECTROS_EN_CACHE_MB)
         self._wavelengths = self._resolver_eje_espectral()
 
         self.fill_value = getattr(source, "relleno", None)
@@ -290,7 +308,32 @@ class HyperspectralCube(object):
         if not (0 <= x < self.samples and 0 <= y < self.lines):
             raise CubeError("Pixel (%d, %d) fuera de la imagen %dx%d"
                             % (x, y, self.samples, self.lines))
-        return self.mask.aplicar(self._limpiar(self.source.read_pixel(y, x)))
+        return self.mask.aplicar(self._espectro_crudo(x, y))
+
+    def _espectro_crudo(self, x, y):
+        """El espectro limpio y sin enmascarar, de donde salga mas barato.
+
+        La cara de arriba del cubo ES el transecto en Y de la fila de la
+        cruz, y el espectro del pixel es una de sus columnas. Cuando ese
+        transecto ya esta leido -y al mover la cruz siempre lo esta- el
+        espectro va de regalo: volver al disco por el seria pagar dos veces
+        el mismo dato, y en un HDF5 comprimido eso son segundos.
+
+        Al reves NO: un clic suelto no lee la fila entera. Sobre un ENVI
+        mapeado en memoria eso seria traer cientos de veces mas dato del
+        necesario para no ganar nada.
+        """
+        fila = self.cache_transectos.obtener(("y", y))
+        if fila is not None:
+            return fila[x]
+        columna = self.cache_transectos.obtener(("x", x))
+        if columna is not None:
+            return columna[y]
+        guardado = self.cache_espectros.obtener((x, y))
+        if guardado is not None:
+            return guardado
+        return self.cache_espectros.poner(
+            (x, y), self._limpiar(self.source.read_pixel(y, x)))
 
     def get_band(self, wavelength=None, index=None):
         """Una banda completa como matriz ``(y, x)``, con cache.
@@ -306,15 +349,11 @@ class HyperspectralCube(object):
         """
         self._asegurar_abierto()
         b = self._resolver_banda(wavelength, index)
-        if b in self._cache:
-            self._cache.move_to_end(b)
-            return self._cache[b]
-        datos = self._limpiar(self.source.read_band(b))
-        datos.flags.writeable = False     # el cache no se modifica desde fuera
-        self._cache[b] = datos
-        while len(self._cache) > BANDAS_EN_CACHE:
-            self._cache.popitem(last=False)
-        return datos
+        guardada = self.cache_bandas.obtener(b)
+        if guardada is not None:
+            return guardada
+        return self.cache_bandas.poner(
+            b, self._limpiar(self.source.read_band(b)))
 
     def get_transect(self, axis, position):
         """Corta el cubo con una linea y devuelve el plano espectral.
@@ -335,14 +374,29 @@ class HyperspectralCube(object):
             if not 0 <= p < self.samples:
                 raise CubeError("Columna %d fuera de 0..%d"
                                 % (p, self.samples - 1))
-            bruto = self.source.read_window(0, self.lines, p, p + 1)
-            return self.mask.aplicar(self._limpiar(bruto[:, 0, :]))
+            return self.mask.aplicar(self._transecto_crudo("x", p))
         if eje == "y":
             if not 0 <= p < self.lines:
                 raise CubeError("Fila %d fuera de 0..%d" % (p, self.lines - 1))
-            bruto = self.source.read_window(p, p + 1, 0, self.samples)
-            return self.mask.aplicar(self._limpiar(bruto[0, :, :]))
+            return self.mask.aplicar(self._transecto_crudo("y", p))
         raise CubeError("axis tiene que ser 'x' o 'y', llego %r" % axis)
+
+    def _transecto_crudo(self, eje, p):
+        """El plano del transecto, limpio y SIN enmascarar, con cache.
+
+        Sin enmascarar a proposito: la mascara se aplica al salir. Guardarlo
+        ya enmascarado haria que apagar el filtro de vapor de agua devolviera
+        el plano de antes -con sus NaN- y el usuario veria que su cambio no
+        hizo nada.
+        """
+        guardado = self.cache_transectos.obtener((eje, p))
+        if guardado is not None:
+            return guardado
+        if eje == "x":
+            bruto = self.source.read_window(0, self.lines, p, p + 1)[:, 0, :]
+        else:
+            bruto = self.source.read_window(p, p + 1, 0, self.samples)[0, :, :]
+        return self.cache_transectos.poner((eje, p), self._limpiar(bruto))
 
     def get_x_profile(self, x):
         """Transecto de columna fija. Atajo de ``get_transect("x", x)``."""
@@ -386,8 +440,9 @@ class HyperspectralCube(object):
     def set_mask(self, mask):
         """Cambia la mascara de bandas malas.
 
-        El cache de bandas no se toca: guarda lecturas sin enmascarar, que es
-        justamente lo que ``get_band`` sigue devolviendo.
+        Los tres caches guardan lecturas SIN enmascarar, asi que ninguno hay
+        que vaciarlo: la mascara nueva se aplica al salir, sobre el mismo
+        dato de siempre.
         """
         self.mask = mask
         return self.mask
@@ -437,7 +492,9 @@ class HyperspectralCube(object):
             attrs={"units": self.unidad_espectral, "source": self.name})
 
     def close(self):
-        self._cache.clear()
+        for cache in (self.cache_bandas, self.cache_transectos,
+                      self.cache_espectros):
+            cache.vaciar()
         if self.source is not None:
             self.source.close()
             self.source = None

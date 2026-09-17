@@ -527,3 +527,93 @@ def test_en_modo_navegacion_no_se_emite_ningun_pixel(vista):
             return Qt.LeftButton
     vista.mouseReleaseEvent(Suelta())
     assert elegidos == []
+
+
+# -- el arrastre no encola mas trabajo del que se puede hacer ----------------
+class Raton(object):
+    """Un evento de raton de mentira, con posicion y boton."""
+
+    def __init__(self, x, y, boton=None):
+        from PyQt5.QtCore import QPointF, Qt
+        self._punto = QPointF(float(x), float(y))
+        self._boton = Qt.LeftButton if boton is None else boton
+
+    def button(self):
+        return self._boton
+
+    def pos(self):
+        return self._punto
+
+
+def arrastrar(vista, puntos):
+    """Aprieta, mueve por todos los puntos y suelta."""
+    # Sin pintar no hay proyeccion, y sin proyeccion no hay donde hacer clic:
+    # los cuadros de las caras se arman al dibujar.
+    vista.grab()
+    vista.mousePressEvent(Raton(*puntos[0]))
+    for x, y in puntos[1:]:
+        vista.mouseMoveEvent(Raton(x, y))
+    vista.mouseReleaseEvent(Raton(*puntos[-1]))
+
+
+def puntos_del_cubo(vista, cuantos):
+    """Una diagonal de puntos que caen todos sobre la cara frontal."""
+    return [(120 + i * 3, 150 + i * 2) for i in range(cuantos)]
+
+
+def test_con_un_cubo_rapido_se_atiende_cada_movimiento(vista):
+    """El freno no debe estorbar cuando no hace falta.
+
+    Sobre un ENVI mapeado en memoria cada movimiento cuesta microsegundos:
+    ahi hay que seguir al raton pixel a pixel, que es lo que hace que la
+    herramienta se sienta viva.
+    """
+    vista.set_modo("pixel")
+    vistos = []
+    vista.posicionMovida.connect(lambda x, y: vistos.append((x, y)))
+    arrastrar(vista, puntos_del_cubo(vista, 12))
+    assert len(vistos) >= 8
+
+
+def test_con_un_cubo_lento_el_arrastre_no_encola_todo(vista, monkeypatch):
+    """Es la diferencia entre esperar y no poder trabajar.
+
+    Sobre un HDF5 comprimido cada pixel de la cruz cuesta segundos -dos
+    transectos y un espectro-. Sin freno, arrastrar cien pixeles encola cien
+    de esos y QGIS se queda inservible varios minutos por un gesto de medio
+    segundo. El freno se mide solo: no empieza otro hasta que haya pasado lo
+    que tardo el anterior.
+    """
+    import time
+    vista.set_modo("pixel")
+    atendidos = []
+    real = vista._mover_a_pixel
+
+    def lento(x, y):
+        atendidos.append((x, y))
+        time.sleep(0.05)
+        real(x, y)
+
+    monkeypatch.setattr(vista, "_mover_a_pixel", lento)
+    arrastrar(vista, puntos_del_cubo(vista, 40))
+    assert len(atendidos) < 20
+
+
+def test_al_soltar_la_cruz_queda_donde_el_raton_la_dejo(vista, monkeypatch):
+    """Frenar no puede significar perderse el destino.
+
+    El freno se salta movimientos intermedios a proposito; el ultimo NO es
+    intermedio. Si se lo saltara, la cruz quedaria a medio camino de donde
+    el usuario la llevo, que es peor que ir lento.
+    """
+    import time
+    vista.set_modo("pixel")
+    real = vista._mover_a_pixel
+    monkeypatch.setattr(vista, "_mover_a_pixel",
+                        lambda x, y: (time.sleep(0.05), real(x, y))[1])
+
+    recorrido = puntos_del_cubo(vista, 30)
+    arrastrar(vista, recorrido)
+
+    esperado = vista._pixel_en(Raton(*recorrido[-1]).pos())
+    assert (vista.x, vista.y) == esperado

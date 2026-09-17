@@ -195,11 +195,136 @@ def test_la_banda_cacheada_no_sostiene_el_memmap(cubo):
 
 
 def test_el_cache_no_crece_sin_limite(datos, wl):
-    from hdfeos_extractor.core import cube as mod
     c = HyperspectralCube.from_array(datos, wl)
     for i in range(BANDAS):
         c.get_band(index=i)
-    assert len(c._cache) <= mod.BANDAS_EN_CACHE
+    assert c.cache_bandas.bytes_usados <= c.cache_bandas.tope
+
+
+# -- lo que hace rapida la interaccion ---------------------------------------
+class FuenteContada(object):
+    """Una fuente que cuenta cuantas veces le tocan el disco."""
+
+    def __init__(self, datos, wavelengths):
+        self.datos = np.asarray(datos, dtype=np.float32)
+        self.wavelengths = np.asarray(wavelengths, dtype=np.float64)
+        self.relleno = None
+        self.escala_reflectancia = None
+        self.fwhm = self.bbl = self.nombres_banda = None
+        self.lecturas = 0
+
+    @property
+    def shape(self):
+        return self.datos.shape
+
+    def read_pixel(self, y, x):
+        self.lecturas += 1
+        return self.datos[y, x, :]
+
+    def read_band(self, b):
+        self.lecturas += 1
+        return self.datos[:, :, b]
+
+    def read_window(self, y0, y1, x0, x1):
+        self.lecturas += 1
+        return self.datos[y0:y1, x0:x1, :]
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def contado(datos, wl):
+    fuente = FuenteContada(datos, wl)
+    return HyperspectralCube(fuente), fuente
+
+
+def test_volver_a_un_transecto_ya_visto_no_toca_el_disco(contado):
+    """Es el gesto mas caro del plugin y el que mas se repite.
+
+    Cada pixel que la cruz recorre pide dos transectos, y arrastrarla de ida
+    y vuelta pide los mismos una y otra vez. Sobre un HDF5 comprimido cada
+    uno de esos cuesta segundos, asi que releerlos es la diferencia entre
+    una herramienta que responde y una que no.
+    """
+    cubo, fuente = contado
+    cubo.get_transect("x", 2)
+    cubo.get_transect("y", 1)
+    despues_de_la_ida = fuente.lecturas
+
+    cubo.get_transect("x", 2)
+    cubo.get_transect("y", 1)
+    assert fuente.lecturas == despues_de_la_ida
+
+
+def test_el_transecto_cacheado_sigue_obedeciendo_a_la_mascara(contado):
+    """Se guarda sin enmascarar: cambiar la mascara no puede dar dato viejo.
+
+    Si se guardara ya enmascarado, apagar el filtro de vapor de agua
+    devolveria el transecto de antes -con sus NaN- y el usuario veria que su
+    cambio no hizo nada.
+    """
+    cubo, _ = contado
+    from hdfeos_extractor.core.bandas import MascaraBandas
+    cubo.get_transect("x", 2)
+    cubo.set_mask(MascaraBandas(cubo.wavelengths, rangos=[(wl_media(cubo),
+                                                           wl_media(cubo))]))
+    plano = cubo.get_transect("x", 2)
+    assert np.isnan(plano[:, cubo.band_index(wl_media(cubo))]).all()
+
+
+def wl_media(cubo):
+    return float(cubo.wavelengths[len(cubo.wavelengths) // 2])
+
+
+def test_el_espectro_sale_del_transecto_que_ya_estaba_leido(contado):
+    """Mover la cruz ya trae la fila entera: el espectro va de regalo.
+
+    La cara de arriba del cubo ES el transecto en Y de la fila de la cruz, y
+    el espectro del pixel es una de sus columnas. Volver al disco por el
+    seria pagar dos veces por el mismo dato -y en un HDF5 comprimido, pagar
+    segundos-.
+    """
+    cubo, fuente = contado
+    cubo.get_transect("y", 1)
+    leido = fuente.lecturas
+
+    espectro = cubo.get_spectrum(2, 1)
+    assert fuente.lecturas == leido
+    assert np.allclose(espectro, cubo.get_transect("y", 1)[2],
+                       equal_nan=True)
+
+
+def test_un_espectro_suelto_no_arrastra_el_transecto_entero(contado):
+    """Al reves no: un clic suelto no justifica leer la fila completa.
+
+    Sobre un ENVI mapeado en memoria, leer la fila entera para un pixel es
+    traer cientos de veces mas dato del necesario.
+    """
+    cubo, fuente = contado
+    cubo.get_spectrum(2, 1)
+    assert fuente.lecturas == 1
+    assert ("y", 1) not in cubo.cache_transectos
+
+
+def test_repetir_el_mismo_pixel_no_toca_el_disco(contado):
+    cubo, fuente = contado
+    cubo.get_spectrum(2, 1)
+    leido = fuente.lecturas
+    cubo.get_spectrum(2, 1)
+    assert fuente.lecturas == leido
+
+
+def test_cerrar_suelta_la_memoria_de_los_caches(contado):
+    """Un cubo cerrado que siguiera reteniendo cien megas no esta cerrado."""
+    cubo, _ = contado
+    cubo.get_band(index=0)
+    cubo.get_transect("x", 2)
+    cubo.get_spectrum(2, 1)
+    cubo.close()
+    assert cubo.cache_bandas.bytes_usados == 0
+    assert cubo.cache_transectos.bytes_usados == 0
+    assert cubo.cache_espectros.bytes_usados == 0
 
 
 def test_la_vista_previa_submuestrea_sin_promediar(memoria):

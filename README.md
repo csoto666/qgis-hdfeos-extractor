@@ -216,6 +216,53 @@ pegajosos y, sin repartir, esconder una mitad dejaría un agujero en vez de
 agrandar la otra—. Al desplegarlo vuelve el reparto que tenías, no el de
 fábrica: el reparto es tuyo.
 
+## Por qué un cubo pesado se sentía lento, y qué se hizo
+
+Medido sobre un cubo del tamaño real de un Tanager —426 bandas, 655×785,
+HDF5 con compresión gzip y *chunks* de un plano de banda, que es el formato en
+el que estos productos circulan—, **mover la cruz un píxel costaba 7,2 s** y
+no mejoraba al repetirlo.
+
+El motivo está en cómo se guarda el archivo. Con *chunks* de un plano por
+banda, leer el espectro de UN píxel obliga a descomprimir los 426 planos
+enteros: 400 MB de inflado de gzip para devolver 426 números. Y cada píxel que
+la cruz recorre pide tres de esas lecturas —las dos caras del cubo son
+transectos, más la firma—.
+
+Tres cambios, ninguno con dependencias nuevas:
+
+**Caché acotado por bytes, no por piezas.** Bandas, transectos y espectros,
+cada uno con su presupuesto. En bytes porque doce bandas de una escena de
+200×200 son tres megabytes y doce de un Tanager son veinticinco: contar piezas
+deja el consumo de memoria a merced del tamaño de la escena. Se guarda **sin
+enmascarar** y la máscara se aplica al salir, así que cambiar el filtro de
+vapor de agua no devuelve dato viejo.
+
+**El espectro sale gratis del transecto.** La cara de arriba del cubo *es* el
+transecto en Y de la fila de la cruz, y el espectro del píxel es una de sus
+columnas. Al revés no: un clic suelto no lee la fila entera, porque sobre un
+ENVI mapeado en memoria eso sería traer cientos de veces más dato del
+necesario.
+
+**El arrastre se atiende al ritmo que el dato deje, no al del ratón.** Sin
+freno, arrastrar la cruz medio segundo encola cien lecturas de cinco segundos
+cada una y QGIS queda inservible varios minutos por algo que ya dejaste de
+pedir. El freno se mide solo —no se empieza otro hasta que haya pasado lo que
+tardó el anterior— así que con dato rápido no frena nada, y lo que se salta
+son los movimientos *intermedios*: el último se guarda y se atiende al soltar,
+de modo que la cruz siempre acaba donde la llevaste.
+
+| gesto | antes | ahora |
+|---|---|---|
+| mover la cruz a un píxel nuevo | 7,2 s | 5,0 s |
+| volver a un píxel ya visitado | 7,0 s | **0,00 s** |
+| arrastrar 60 píxeles | 277 s | **14,4 s** |
+
+Los 5 s del píxel nuevo son el archivo, no el plugin: es lo que cuesta
+descomprimirlo. Sobre un ENVI extraído —que está mapeado en memoria y sin
+comprimir— los mismos gestos cuestan milisegundos, y por eso **Extraer…**
+sigue siendo la mejor inversión para trabajar mucho rato sobre una escena.
+
 ## El zoom recalcula el realce
 
 Acercarse no es sólo ver más grande. Una escena sin ortorectificar llega dentro

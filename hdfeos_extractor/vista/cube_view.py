@@ -37,6 +37,8 @@ para tres caras, y mantiene la regla del proyecto: nada obligatorio mas alla
 de lo que trae QGIS.
 """
 
+import time
+
 import numpy as np
 
 from ..core.colormap import PALETA_POR_DEFECTO, colorear, tabla
@@ -64,6 +66,16 @@ INCLINACION = 0.55
 #: no necesita 5000 pixeles de cara para verse: se decima por salto, que
 #: ademas conserva los espectros reales en vez de promediar vecinos.
 LADO_MAXIMO = 1400
+
+#: Tope del freno del arrastre, en segundos. Vease ``_arrastrar_a``: el
+#: freno se mide solo, y esto solo impide que un cubo pesadisimo deje la
+#: cruz quieta mas de un segundo. Mejor ir atrasado que parecer colgado.
+TOPE_DEL_FRENO = 1.0
+
+#: Por debajo de esto no se frena nada. Un gesto que cuesta menos que un
+#: cuadro de video no necesita proteccion, y frenarlo se notaria como una
+#: cruz que no sigue al raton sobre un cubo que va sobrado.
+GESTO_BARATO = 0.02
 
 #: Cuantas filas se leen para fijar el rango de color del cubo. Cinco cortes
 #: repartidos dan un realce estable sin leer la escena entera al abrir.
@@ -182,6 +194,10 @@ class CubeView(QtWidgets.QWidget):
         self._cuadros = {}            # nombre -> QPolygonF, para acertar clics
         self._transformadas = {}      # nombre -> QTransform de cada cara
         self._arrastrando = False
+        # Freno del arrastre. Vease _arrastrar_a.
+        self._pendiente = None
+        self._costo_del_arrastre = 0.0
+        self._fin_del_arrastre = 0.0
 
     # -- datos --------------------------------------------------------------
     def set_cube(self, cube, composer=None):
@@ -867,7 +883,40 @@ class CubeView(QtWidgets.QWidget):
             self._area = self._area[:2] + pixel
             self.update()
             return
+        self._arrastrar_a(pixel)
+
+    def _arrastrar_a(self, pixel):
+        """Atiende el arrastre al ritmo que el dato deje, no al del raton.
+
+        Cada pixel que la cruz recorre pide dos transectos y un espectro.
+        Sobre un ENVI mapeado en memoria eso son microsegundos y hay que
+        seguir al raton pixel a pixel. Sobre un HDF5 comprimido de 426
+        bandas son SEGUNDOS, y ahi atender cada movimiento es lo peor que se
+        puede hacer: un gesto de medio segundo encola cien lecturas de
+        varios segundos cada una y QGIS se queda inservible varios minutos
+        por algo que el usuario ya dejo de pedir.
+
+        El freno se mide solo y no tiene numero magico que ajustar a cada
+        maquina: no se empieza otro hasta que haya pasado lo que tardo el
+        anterior. Con dato rapido no frena nada -el costo es cero- y con
+        dato lento se queda en un movimiento por cada uno que alcanza a
+        hacer. El tope existe para que un cubo pesadisimo no deje la cruz
+        quieta mas de un segundo: mejor ir atrasado que parecer colgado.
+
+        Lo que se salta son los movimientos INTERMEDIOS. El ultimo se
+        guarda, y al soltar se atiende: la cruz siempre acaba donde el
+        usuario la llevo.
+        """
+        ahora = time.monotonic()
+        if ahora - self._fin_del_arrastre < self._costo_del_arrastre:
+            self._pendiente = pixel
+            return
+        self._pendiente = None
         self._mover_a_pixel(*pixel)
+        self._fin_del_arrastre = time.monotonic()
+        medido = self._fin_del_arrastre - ahora
+        self._costo_del_arrastre = (0.0 if medido < GESTO_BARATO
+                                    else min(TOPE_DEL_FRENO, medido))
 
     def mouseReleaseEvent(self, evento):
         if self._pan_desde is not None:
@@ -886,6 +935,12 @@ class CubeView(QtWidgets.QWidget):
         if not self._arrastrando:
             return
         self._arrastrando = False
+        if self._pendiente is not None:
+            # El destino no es un movimiento intermedio: saltarselo dejaria
+            # la cruz a medio camino de donde el usuario la llevo, que es
+            # peor que ir lento.
+            pendiente, self._pendiente = self._pendiente, None
+            self._mover_a_pixel(*pendiente)
         if self.modo == MODO_AREA and self._area is not None:
             x0, y0, x1, y1 = self._area
             self._area = None
