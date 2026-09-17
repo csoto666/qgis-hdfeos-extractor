@@ -42,6 +42,7 @@ from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
 from ..vista.cube_view import MODOS_NAVEGACION
 from ..vista.panel_cubo import PanelCubo, VentanaSuelta
+from ..vista.plegable import GrupoPlegable
 from ..vista.qt import (HORIZONTAL, VERTICAL, QtCore, QtGui,
                         QtWidgets, Qt, enum, politica)
 from ..vista.spectral_plot import SpectralPlot
@@ -132,6 +133,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.herramienta = None
         self._bloqueado = False        # corta los bucles de senales
         self.divisor = None            # existe recien en _construir
+        self._reparto_previo = None    # el reparto de antes de plegar
         self._cubo_suelto = False
         self.vinculo = None            # necesita el cubo, que aun no existe
         # Hijo del panel a proposito: Qt lo destruye junto con el, asi que un
@@ -226,12 +228,49 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         ahi manda el usuario: dentro de una misma orientacion no se le toca
         el divisor.
         """
-        largo = (self.divisor.width()
-                 if self.divisor.orientation() == HORIZONTAL
-                 else self.divisor.height())
+        if not self.grupo_grafico.abierto():
+            # Plegado, el perfil no quiere su parte: volver a darsela seria
+            # reabrir un hueco que el usuario acaba de cerrar.
+            self._plegar_el_perfil(False)
+            return
+        largo = self._largo_del_divisor()
         if largo > 0:
             cubo = int(largo * 0.56)
             self.divisor.setSizes([cubo, largo - cubo])
+
+    def _largo_del_divisor(self):
+        """Lo que el divisor tiene para repartir, segun como este puesto."""
+        return (self.divisor.width()
+                if self.divisor.orientation() == HORIZONTAL
+                else self.divisor.height())
+
+    def _plegar_el_perfil(self, abierto):
+        """Reparte de nuevo el divisor al plegar o desplegar el perfil.
+
+        Los tamanos de un QSplitter son pegajosos: esconder una mitad no
+        hace crecer a la otra. Sin esto, plegar el perfil dejaria el cubo
+        igual de grande y un agujero debajo, que es lo contrario de lo que
+        se pedia al plegarlo.
+
+        Al desplegar se devuelve el reparto que habia -no el de fabrica-,
+        porque el reparto es del usuario: lo movio el, y plegar un rato no
+        es motivo para perderlo.
+        """
+        if self.divisor is None:
+            return
+        largo = self._largo_del_divisor()
+        if largo <= 0:
+            return
+        if not abierto:
+            self._reparto_previo = self.divisor.sizes()
+            minimo = self.grupo_grafico.minimumSizeHint()
+            borde = (minimo.width()
+                     if self.divisor.orientation() == HORIZONTAL
+                     else minimo.height())
+            self.divisor.setSizes([max(0, largo - borde), borde])
+        elif self._reparto_previo:
+            reparto, self._reparto_previo = self._reparto_previo, None
+            self.divisor.setSizes(reparto)
 
     def _conviene_a_lo_ancho(self):
         area = self._area_de_acople()
@@ -407,8 +446,11 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         return rejilla
 
     def _bloque_grafico(self):
-        grupo = QtWidgets.QGroupBox("Perfil espectral")
-        caja = QtWidgets.QVBoxLayout(grupo)
+        self.grupo_grafico = GrupoPlegable(
+            "Perfil espectral",
+            ayuda="Pulse el nombre para plegar el perfil y darle ese alto\n"
+                  "al cubo. Lo que hay dentro no se pierde.")
+        caja = QtWidgets.QVBoxLayout()
         caja.setContentsMargins(3, 3, 3, 3)
         self.grafico = SpectralPlot()
         # Un piso para el grafico: apilado bajo el cubo se quedaba en una
@@ -441,7 +483,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.panel_bandas.setLayout(self._filas_bandas_malas())
         self.panel_bandas.setVisible(False)
         caja.addWidget(self.panel_bandas)
-        return grupo
+        self.grupo_grafico.poner(caja)
+        return self.grupo_grafico
 
     def _filas_bandas_malas(self):
         columna = QtWidgets.QVBoxLayout()
@@ -488,12 +531,16 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         return boton
 
     def _bloque_firmas(self):
-        grupo = QtWidgets.QGroupBox("Firmas guardadas")
+        self.grupo_firmas = GrupoPlegable(
+            "Firmas guardadas",
+            ayuda="Pulse el nombre para plegar la lista. Las firmas siguen\n"
+                  "guardadas y sus curvas siguen en el grafico.")
         # Preferred/Maximum y no el Expanding que traen los grupos: sin esto
         # se queda con el alto sobrante en vez de cederselo al divisor, que
         # es donde estan las dos vistas.
-        grupo.setSizePolicy(politica("Preferred"), politica("Maximum"))
-        caja = QtWidgets.QVBoxLayout(grupo)
+        self.grupo_firmas.setSizePolicy(politica("Preferred"),
+                                        politica("Maximum"))
+        caja = QtWidgets.QVBoxLayout()
         self.lista = QtWidgets.QListWidget()
         self.lista.setAlternatingRowColors(True)
         # Con un tope, la lista deja de competir por el alto con las dos
@@ -535,7 +582,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             enum(QtWidgets.QToolButton, "ToolButtonPopupMode",
                  "InstantPopup"))
         fila.addWidget(self.boton_lib)
-        return grupo
+        self.grupo_firmas.poner(caja)
+        return self.grupo_firmas
 
     # -- conexiones ---------------------------------------------------------
     def _conectar(self):
@@ -547,6 +595,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.panel_cubo.boton_enviar.clicked.connect(self._enviar_a_qgis)
         self.panel_cubo.soltarPedido.connect(self._soltar_cubo)
         self._aplazado.timeout.connect(self._reempotrar_cubo)
+        self.grupo_grafico.plegado.connect(self._plegar_el_perfil)
         self._al_mostrar.timeout.connect(self._restablecer)
         self.vinculo = VinculoVistas(self.cubo, self.canvas, self.controller,
                                      self)

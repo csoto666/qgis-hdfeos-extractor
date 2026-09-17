@@ -195,6 +195,27 @@ Por el mismo motivo, el panel **no hace ningún trabajo dentro de su
 tocar el lienzo ahí es reentrar en lo que Qt está reacomodando. Lo que haya que
 rehacer al volver a mostrarlo se aplaza un giro del bucle de eventos.
 
+## Plegar lo que ahora mismo no se está mirando
+
+El panel tiene cuatro bloques y una sola columna de alto para repartir entre
+ellos. Según lo que estés haciendo, uno de ellos es el trabajo y los otros son
+contexto: al comparar firmas manda el gráfico, al recorrer el cubo manda el
+cubo, y en ese momento la lista de firmas y el perfil son dos franjas que no
+estás mirando y que le están quitando alto a lo que sí.
+
+**El nombre de la sección es el botón.** Pulsa *Perfil espectral* o *Firmas
+guardadas* y la sección se pliega a su título; vuelve a pulsarlo y regresa.
+La flecha del nombre dice en qué estado está —▾ abierta, ▸ plegada—, que es
+lo que distingue una sección plegada de una sección vacía. Es el mismo
+mecanismo de *Bandas R G B* y *Bandas malas*, subido al título.
+
+Plegar no es cerrar: no se reconstruye nada, las firmas siguen guardadas y sus
+curvas siguen en el gráfico. Al plegar el perfil, el divisor **reparte de
+nuevo** y ese alto se lo queda el cubo —los tamaños de un divisor de Qt son
+pegajosos y, sin repartir, esconder una mitad dejaría un agujero en vez de
+agrandar la otra—. Al desplegarlo vuelve el reparto que tenías, no el de
+fábrica: el reparto es tuyo.
+
 ## El zoom recalcula el realce
 
 Acercarse no es sólo ver más grande. Una escena sin ortorectificar llega dentro

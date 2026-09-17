@@ -99,6 +99,11 @@ def desmontar(panel):
     panel.apagar()
     panel.close()
     panel.setParent(None)
+    ventana = getattr(panel, "_ventana_de_prueba", None)
+    if ventana is not None:
+        ventana.close()
+        ventana.deleteLater()
+        panel._ventana_de_prueba = None
     panel.deleteLater()
     aplicacion = QtWidgets.QApplication.instance()
     if aplicacion is not None:
@@ -369,6 +374,11 @@ def _en_una_ventana(panel, ancho, alto):
     ventana.resizeDocks([panel], [ancho], Qt.Horizontal)
     ventana.show()
     _asentar(QtWidgets.QApplication.instance())
+    # La ventana queda guardada EN el panel y no solo devuelta: una prueba
+    # que no guarde lo que se le devuelve la deja morir al terminar, y al
+    # morir se lleva por delante al panel que tiene acoplado. Que la prueba
+    # se acuerde no es una garantia; que lo haga el ayudante, si.
+    panel._ventana_de_prueba = ventana
     return ventana
 
 
@@ -801,3 +811,74 @@ def test_apagar_dos_veces_no_revienta(panel):
     girar_el_bucle()                   # aqui muere de verdad la ventana
     panel.apagar()
     panel.close()
+
+
+# -- plegar las secciones --------------------------------------------------
+def test_las_dos_secciones_de_abajo_se_pliegan(panel):
+    """El perfil y las firmas son contexto la mitad del tiempo.
+
+    Segun lo que se este haciendo, uno de los bloques es el trabajo y los
+    otros le estan quitando alto. Plegarlos es lo que deja mirar el cubo en
+    grande sin cerrar nada ni perder el sitio.
+    """
+    assert panel.grupo_grafico.abierto()
+    assert panel.grupo_firmas.abierto()
+
+    panel.grupo_grafico.cabecera.click()
+    panel.grupo_firmas.cabecera.click()
+    # isVisibleTo y no isVisible: el panel de la prueba no esta en pantalla,
+    # asi que nada es visible; lo que se pregunta es si se veria.
+    assert not panel.grafico.isVisibleTo(panel.grupo_grafico)
+    assert not panel.lista.isVisibleTo(panel.grupo_firmas)
+
+    panel.grupo_grafico.cabecera.click()
+    panel.grupo_firmas.cabecera.click()
+    assert panel.grafico.isVisibleTo(panel.grupo_grafico)
+    assert panel.lista.isVisibleTo(panel.grupo_firmas)
+
+
+def test_plegar_el_perfil_le_da_el_sitio_al_cubo(panel):
+    """Si el divisor no repartiera de nuevo, quedaria un hueco vacio.
+
+    Los tamanos de un QSplitter son pegajosos: al esconder una mitad, la
+    otra NO crece sola. Sin repartir, plegar el perfil dejaria el cubo del
+    mismo tamano y un agujero debajo, que es justo lo contrario de lo que se
+    pedia.
+    """
+    _en_una_ventana(panel, 500, 900)
+    panel.divisor.setSizes([400, 300])
+    antes = panel.divisor.sizes()[0]
+
+    panel.grupo_grafico.cabecera.click()
+    _asentar(QtWidgets.QApplication.instance())
+    assert panel.divisor.sizes()[0] > antes
+
+
+def test_plegar_no_pierde_lo_que_hay_dentro(panel):
+    """Plegar es esconder, no cerrar: nada se reconstruye."""
+    panel.controller.on_pixel_changed(3, 2)
+    panel.controller.save_current("una firma")
+    curvas = panel.grafico
+
+    panel.grupo_firmas.cabecera.click()
+    panel.grupo_firmas.cabecera.click()
+
+    assert panel.lista.count() == 1
+    assert panel.grafico is curvas
+    assert len(panel.controller.library) == 1
+
+
+def test_desplegar_no_reenciende_los_botones_apagados(panel):
+    """Sin escena abierta los botones estan apagados, y asi deben quedar.
+
+    Es la trampa del QGroupBox marcable de Qt, que enciende a todos sus
+    hijos al marcarlo. Aqui se comprueba desde el panel, que es donde el
+    usuario lo sufriria: plegar y desplegar no es abrir una escena.
+    """
+    panel._habilitar(False)
+    assert not panel.boton_guardar.isEnabled()
+
+    panel.grupo_firmas.cabecera.click()
+    panel.grupo_firmas.cabecera.click()
+
+    assert not panel.boton_guardar.isEnabled()

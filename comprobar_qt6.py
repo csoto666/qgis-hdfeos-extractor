@@ -102,6 +102,7 @@ def main():
                                                   MODO_X, MODO_ZOOM)
     from hdfeos_extractor.vista.panel_cubo import (PanelCubo,
                                                    VentanaSuelta)
+    from hdfeos_extractor.vista.plegable import GrupoPlegable
     from hdfeos_extractor.vista.spectral_plot import Curva, SpectralPlot
     from hdfeos_extractor.vista import spectral_plot
 
@@ -135,9 +136,17 @@ def main():
               % ("pyqtgraph %s" % getattr(spectral_plot.pg, "__version__", "?")
                  if spectral_plot.pg is not None else "lienzo propio"))
 
+        # El grafico dentro de una seccion plegable, que es como vive en el
+        # panel: la politica de tamano que usa al plegarse es un enum, y en
+        # Qt6 vive dentro de QSizePolicy.Policy.
+        seccion = GrupoPlegable("Perfil espectral")
+        caja_seccion = QtWidgets.QVBoxLayout()
+        caja_seccion.addWidget(grafico, 1)
+        seccion.poner(caja_seccion)
+
         divisor = QtWidgets.QSplitter(puente.HORIZONTAL)
         divisor.addWidget(panel)
-        divisor.addWidget(grafico)
+        divisor.addWidget(seccion)
         divisor.resize(1100, 680)
         divisor.show()
         app.processEvents()
@@ -154,6 +163,14 @@ def main():
         panel.cubo.zoom_a_los_datos()
         panel.cubo.acercar(2.0, None)
         panel.cubo.desplazar(12, -8)
+        divisor.grab()
+
+        seccion.set_abierto(False)
+        app.processEvents()
+        if seccion.cuerpo.isVisible() or divisor.grab().isNull():
+            raise SystemExit("la seccion plegada no quedo bien")
+        seccion.set_abierto(True)
+        app.processEvents()
         divisor.grab()
 
         # Soltar el cubo y empotrarlo de vuelta, con el arbol ya visible.
