@@ -37,7 +37,7 @@ for d in core vista qgis_ui; do
     mkdir "$TEMP/$PAQUETE/$d"
     cp "$AQUI/$PAQUETE/$d"/*.py "$TEMP/$PAQUETE/$d/"
 done
-cp "$AQUI/LICENSE" "$AQUI/README.md" "$TEMP/$PAQUETE/"
+cp "$AQUI/LICENSE" "$AQUI/README.md" "$AQUI/NOTAS.md" "$TEMP/$PAQUETE/"
 
 rm -f "$SALIDA"
 (cd "$TEMP" && zip -q -r - "$PAQUETE") > "$SALIDA"

@@ -2,7 +2,7 @@
 name=HDF-EOS Explorer
 qgisMinimumVersion=3.16
 description=Click a pixel in a hyperspectral HDF-EOS5 cube and see its spectrum. Explores Planet Tanager and similar products without converting them, and extracts to ENVI.
-version=2.17
+version=2.18
 author=Carlo Soto Castro
 email=carlo.soto.castro@gmail.com
 
@@ -21,25 +21,26 @@ about=A hyperspectral cube is three things at once: a place, a picture and a spe
 icon=icon.png
 tags=hyperspectral,hdf5,hdf-eos,envi,tanager,planet,remote sensing,spectral,spectra,signature,reflectance,raster,imagery,processing,analysis,spectral library,datacube
 
-changelog=2.17 - Ficha del complemento mas corta y clara. Sin cambios en el funcionamiento.
-    2.16 - Mucho mas agil sobre cubos pesados: se cachean bandas, transectos y espectros, y el arrastre deja de encolar trabajo. Volver a un pixel ya visitado es inmediato.
-    2.15 - Las secciones "Perfil espectral" y "Firmas guardadas" se pliegan al pulsar su nombre, para darle el alto al cubo.
-    2.14 - Corrige un cierre inesperado de QGIS en macOS al soltar y volver a empotrar la ventana del cubo.
-    2.13 - Cerrar el panel ya no cierra la escena, y la ventana suelta del cubo vuelve sola al cerrarla.
-    2.12 - Nuevo "Vincular con el mapa": el cubo y el lienzo de QGIS navegan juntos.
-    2.11 - Correcciones de seguridad y de importaciones exigidas por el repositorio de complementos.
-    2.10 - Corrige un fallo de carga de la 2.9: faltaba un modulo en el ZIP.
-    2.9 - Compatible con Qt6.
-    2.8 - Corrige la georreferencia cuando la escena se lee con GDAL: aterrizaba lejos de su sitio.
-    2.7 - Verificado esquina a esquina contra un producto Tanager real.
-    2.6 - Se le pregunta tambien a GDAL por la georreferencia cuando no aparece de otro modo.
-    2.5 - Los productos ortorectificados se ubican solos, leyendo el grid del HDF-EOS. La extraccion a ENVI conserva la georreferencia.
-    2.4 - La vista enviada a QGIS sale con la georreferencia del archivo, con rotacion y transparencia. El cubo y el espectro pasan al mismo panel.
-    2.3 - El cubo pasa a tener ventana propia y aparece "Enviar vista a QGIS".
-    2.2 - Barra de color con la escala del dato, zoom, "Ajustar a los datos" y modo de pixeles sueltos.
-    2.1 - Bandas malas: la bbl del archivo, las ventanas de vapor de agua, los extremos y los rangos propios quedan fuera del analisis.
-    2.0 - El extractor y el explorador pasan a ser un solo complemento, con panel acoplable y biblioteca de firmas.
-    1.0 - Version inicial: algoritmo "HDF-EOS5 to ENVI" en la Caja de herramientas.
+changelog=2.18 - Clearer documentation. The plugin page and the repository README now say what the plugin does and how to install it; the reasoning behind each decision moved to NOTAS.md, where whoever touches the code looks for it. No functional changes.
+    2.17 - Shorter, clearer plugin page. No functional changes.
+    2.16 - Much quicker on heavy cubes: bands, transects and spectra are cached, and dragging no longer queues up work. Returning to a pixel you already visited is immediate.
+    2.15 - The "Spectral profile" and "Saved signatures" sections fold away when you click their name, giving the height to the cube.
+    2.14 - Fixes an unexpected QGIS crash on macOS when detaching and re-docking the cube window.
+    2.13 - Closing the panel no longer closes the scene, and the detached cube window comes back when you close it.
+    2.12 - New "Link with the map": the cube and the QGIS canvas navigate together.
+    2.11 - Security and import fixes required by the plugin repository.
+    2.10 - Fixes a loading failure in 2.9: a module was missing from the ZIP.
+    2.9 - Qt6 compatible.
+    2.8 - Fixes the georeference when the scene is read through GDAL: it used to land far from its place.
+    2.7 - Verified corner to corner against a real Tanager product.
+    2.6 - GDAL is also asked for the georeference when it does not turn up any other way.
+    2.5 - Orthorectified products place themselves, reading the HDF-EOS grid. Extraction to ENVI keeps the georeference.
+    2.4 - The view sent to QGIS carries the file's own georeference, with rotation and transparency. Cube and spectrum move into the same panel.
+    2.3 - The cube gets its own window, and "Send view to QGIS" appears.
+    2.2 - Colour bar with the data scale, zoom, "Fit to data" and a multi-pixel mode.
+    2.1 - Bad bands: the file's bbl, the water vapour windows, the noisy ends and hand-written ranges are kept out of the analysis.
+    2.0 - Extractor and explorer become a single plugin, with a dockable panel and a signature library.
+    1.0 - First release: "HDF-EOS5 to ENVI" algorithm in the Processing toolbox.
 
 tracker=https://github.com/csoto666/qgis-hdfeos-extractor/issues
 repository=https://github.com/csoto666/qgis-hdfeos-extractor
