@@ -34,6 +34,10 @@ extracts them to ENVI's native format when they have to leave.*
   desviación y del ángulo espectral, no sólo escondidas del gráfico.
 - **Biblioteca de firmas** con nombre, notas, comparación por ángulo espectral,
   guardado en JSON y exportación a CSV.
+- **Nube n-dimensional** de las firmas guardadas, en una ventana aparte que se
+  enciende y se apaga: cada píxel de cada firma es un punto, proyectado sobre
+  un plano que gira. Dos clases que se tapan en el par de bandas que elegiste
+  se separan al girar, y el lazo devuelve ese grupo como una firma nueva.
 - **Enviar la vista a QGIS** como capa georreferenciada, y **vincular** la
   navegación del cubo con la del mapa.
 - **Algoritmo de Processing «HDF-EOS5 to ENVI»**, por lotes y desde el
@@ -128,6 +132,30 @@ processing.run("hdfeos_extractor:extraer_hdfeos_a_envi", {
     'CARPETA': '/ruta/salida', 'PREFIJO': '',
 })
 ```
+
+### La nube n-dimensional
+
+Un gráfico de dispersión de dos bandas casi siempre miente por omisión: dos
+clases que en el espectro completo están clarísimamente separadas pueden caer
+una encima de la otra en el par de bandas que elegiste. La separación existe,
+pero no en ese plano.
+
+Pulsa **Nube n-D** en la columna de salida. Cada píxel de cada firma guardada
+es un punto, coloreado por su firma, y la nube entera se proyecta sobre un
+plano que **gira**: el ojo separa grupos en movimiento muchísimo mejor que
+quietos. Los radios etiquetados son los ejes de cada banda; uno que apunta
+hacia donde se alarga un grupo dice que esa banda es la que lo separa.
+
+| Control | Para qué |
+|---|---|
+| **Girar** | Arranca la rotación. Con dos bandas no hay nada que girar y el botón se apaga |
+| Arrastrar | Gira la nube a mano, para quedarse en una vista concreta |
+| **Lazo** | Rodea un grupo y lo devuelve a la biblioteca como una firma nueva, con sus píxeles |
+| **Repartir** | Elige N bandas repartidas por todo el espectro: bandas vecinas están casi correlacionadas y diez seguidas son una sola dimensión |
+| Clases | Apagar una la saca de la vista sin borrarla; es lo que deja mirar el grupo que quedaba tapado |
+
+El porqué de cada decisión —la rotación, los radios, el submuestreo— está en
+[NOTAS.md](NOTAS.md#la-nube-n-dimensional).
 
 > **Si vas a recorrer mucho una misma escena, extraela a ENVI primero.** Un
 > HDF5 comprimido obliga a descomprimir trozos enteros por cada espectro; el

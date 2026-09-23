@@ -36,12 +36,14 @@ from qgis.core import QgsProject, QgsRasterLayer
 from ..core.cube import CubeError, HyperspectralCube
 from ..core.georef import Georreferencia
 from ..core.hdf5 import Hdf5Source
+from ..core.ndim import nube_de_firmas
 from ..core.library import LibraryError, SpectralLibrary
 from ..core.bandas import formatear_rangos, parsear_rangos
 from ..core.colormap import nombres as paletas
 from ..core.rgb import MODOS, RGBComposer
 from ..vista.cube_view import MODOS_NAVEGACION
 from ..vista.panel_cubo import PanelCubo, VentanaSuelta
+from ..vista.panel_ndim import PanelND
 from ..vista.plegable import GrupoPlegable
 from ..vista.qt import (HORIZONTAL, VERTICAL, QtCore, QtGui,
                         QtWidgets, Qt, enum, politica)
@@ -171,6 +173,12 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         # Vacia hasta que se suelte el cubo. Se crea junto con el panel para
         # que soltar sea solo mudar de padre, sin construir nada en caliente.
         self.ventana_suelta = VentanaSuelta(self._ventana_principal())
+        # La nube n-D vive en su propia ventana y apagada por defecto: es una
+        # herramienta de analisis, no algo que haga falta tener siempre
+        # delante, y el panel ya esta bastante lleno.
+        self.panel_ndim = PanelND()
+        self.ventana_nube = VentanaSuelta(self._ventana_principal())
+        self.ventana_nube.setWindowTitle("Nube n-dimensional")
 
         # En el divisor van las dos vistas y nada mas. Metiendo ademas la
         # fila de la escena, la biblioteca y el estado, la mitad de abajo
@@ -596,6 +604,15 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.panel_cubo.soltarPedido.connect(self._soltar_cubo)
         self._aplazado.timeout.connect(self._reempotrar_cubo)
         self.grupo_grafico.plegado.connect(self._plegar_el_perfil)
+        self.panel_cubo.nubePedida.connect(self._abrir_la_nube)
+        self.panel_ndim.bandasCambiadas.connect(
+            lambda _bandas: self._rehacer_la_nube())
+        self.panel_ndim.firmaPedida.connect(self._firma_desde_la_nube)
+        self.ventana_nube.cerrada.connect(self._nube_cerrada)
+        self._aplazado_nube = QtCore.QTimer(self)
+        self._aplazado_nube.setSingleShot(True)
+        self._aplazado_nube.timeout.connect(
+            lambda: self.panel_cubo.boton_nube.setChecked(False))
         self._al_mostrar.timeout.connect(self._restablecer)
         self.vinculo = VinculoVistas(self.cubo, self.canvas, self.controller,
                                      self)
@@ -649,6 +666,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
         self.controller.curvasCambiadas.connect(self.grafico.set_curvas)
         self.controller.bibliotecaCambiada.connect(self._refrescar_lista)
+        self.controller.bibliotecaCambiada.connect(self._rehacer_la_nube)
         self.controller.pixelCambiado.connect(self._mostrar_pixel)
         self.controller.pixelCambiado.connect(self.cubo.set_posicion)
         self.controller.transectoCambiado.connect(self._mostrar_transecto)
@@ -668,6 +686,87 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
         QgsProject.instance().layersAdded.connect(self.recargar_capas)
         QgsProject.instance().layersRemoved.connect(self.recargar_capas)
+
+    # -- nube n-dimensional -------------------------------------------------
+    def _abrir_la_nube(self, abrir):
+        """Enciende o apaga la ventana de la nube.
+
+        Apagada no cuesta nada: la ventana existe pero esta vacia y su reloj
+        parado. Encenderla arma la nube con lo que haya guardado en ese
+        momento.
+        """
+        if not abrir:
+            self.panel_ndim.vista.set_animar(False)
+            if self.ventana_nube is not None:
+                self.ventana_nube.hide()
+            return
+        cubo = self.controller.cube
+        if cubo is None or cubo.cerrado:
+            self._avisar("Primero abra una escena")
+            self._aplazado_nube.start(0)
+            return
+        if not self.panel_ndim.lista_bandas.count():
+            self.panel_ndim.set_bandas_disponibles(cubo.wavelengths,
+                                                   cubo.unidad_espectral)
+        self._rehacer_la_nube()
+        self.ventana_nube.resize(980, 660)
+        self.ventana_nube.alojar(self.panel_ndim)
+
+    def _nube_cerrada(self):
+        """Cerrar la ventana desmarca el boton, que es lo que la apaga.
+
+        Aplazado al siguiente giro del bucle por lo mismo que la ventana del
+        cubo: esto corre DENTRO del closeEvent de la propia ventana.
+        """
+        if self.panel_cubo.boton_nube.isChecked():
+            self._aplazado_nube.start(0)
+
+    def _rehacer_la_nube(self):
+        """Arma la nube con las firmas guardadas y las bandas elegidas.
+
+        Se rehace al cambiar la biblioteca y al cambiar las bandas, y solo
+        si la ventana esta encendida: leer los pixeles de todas las firmas
+        cuesta, y no tiene sentido pagarlo por una ventana que nadie ve.
+        """
+        if not self.panel_cubo.boton_nube.isChecked():
+            return
+        cubo = self.controller.cube
+        if cubo is None or cubo.cerrado:
+            return
+        bandas = self.panel_ndim.bandas()
+        if len(bandas) < 2:
+            self.panel_ndim.set_nube(None)
+            return
+        firmas = list(self.controller.library)
+        try:
+            nube = nube_de_firmas(cubo, firmas, bandas)
+        except CubeError as exc:
+            self._avisar("No se pudo armar la nube: %s" % exc)
+            return
+        nube.rotulos = ["%.0f" % cubo.wavelengths[b] for b in nube.bandas]
+        self.panel_ndim.set_nube(nube)
+
+    def _firma_desde_la_nube(self, indices):
+        """Convierte lo rodeado con el lazo en una firma nueva.
+
+        Es el cierre del circulo: se vino aca a ver si un grupo existe de
+        verdad, y si existe uno se lo lleva de vuelta a la biblioteca -con
+        sus pixeles- para compararlo con las demas firmas.
+        """
+        nube = self.panel_ndim.vista.nube
+        if nube is None or indices is None or not len(indices):
+            return
+        coords = [nube.pixeles[i] for i in indices if i < len(nube.pixeles)]
+        if not coords:
+            return
+        if self.controller.on_pixels_selected(coords) is None:
+            return
+        nombre = self._pedir_nombre("Guardar firma del lazo", "grupo n-D",
+                                    padre=self.panel_ndim)
+        if nombre:
+            self.controller.save_current(nombre)
+            self._avisar("Firma '%s' guardada con %d pixeles del lazo"
+                         % (nombre, len(coords)))
 
     # -- capas --------------------------------------------------------------
     def recargar_capas(self, *_):
@@ -819,6 +918,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
             deslizador.setEnabled(activo)
             numero.setEnabled(activo)
         self.panel_cubo.habilitar(activo)
+        self.panel_ndim.habilitar(activo)
         # Vincular necesita ademas saber donde esta la escena; sin eso el
         # boton se queda apagado y su ayuda explica por que.
         se_puede = activo and self.controller.georref.tiene_mapa
@@ -1051,12 +1151,22 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         if self.controller.firma_actual is None:
             self._avisar("Primero haga clic en un pixel o dibuje un area")
             return
-        sugerido = self.controller.firma_actual.name
+        nombre = self._pedir_nombre("Guardar firma",
+                                    self.controller.firma_actual.name)
+        if nombre:
+            self.controller.save_current(nombre)
+
+    def _pedir_nombre(self, titulo, sugerido, padre=None):
+        """Pide un nombre y devuelve None si el usuario se arrepiente.
+
+        En un metodo propio y no repetido en cada sitio: es el unico dialogo
+        modal del panel, y tenerlo en un solo lugar es lo que permite
+        probar sin el todo lo que lo rodea.
+        """
         nombre, aceptado = QtWidgets.QInputDialog.getText(
-            self, "Guardar firma", "Nombre:",
+            padre or self, titulo, "Nombre:",
             enum(QtWidgets.QLineEdit, "EchoMode", "Normal"), sugerido)
-        if aceptado and nombre.strip():
-            self.controller.save_current(nombre.strip())
+        return nombre.strip() if aceptado and nombre.strip() else None
 
     def _seleccionada(self):
         item = self.lista.currentItem()
@@ -1066,11 +1176,9 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         actual = self._seleccionada()
         if actual is None:
             return
-        nombre, aceptado = QtWidgets.QInputDialog.getText(
-            self, "Renombrar firma", "Nuevo nombre:",
-            enum(QtWidgets.QLineEdit, "EchoMode", "Normal"), actual)
-        if aceptado:
-            self.controller.rename_signature(actual, nombre.strip())
+        nombre = self._pedir_nombre("Renombrar firma", actual)
+        if nombre:
+            self.controller.rename_signature(actual, nombre)
 
     def _quitar_firma(self):
         actual = self._seleccionada()
@@ -1176,6 +1284,11 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         # giro del bucle es exactamente lo que pasa al descargar el
         # complemento con el panel recien abierto.
         self._al_mostrar.stop()
+        # La nube no tiene sentido con el panel escondido, y su reloj
+        # seguiria gastando cuadros sobre una ventana que nadie mira.
+        self.panel_ndim.vista.set_animar(False)
+        if self.ventana_nube is not None:
+            self.ventana_nube.hide()
         if self._cubo_suelto and self.ventana_suelta is not None:
             # Esconderla, no cerrarla. Cerrarla dispararia el reempotrado, y
             # eso es reacomodar el arbol de widgets justo mientras Qt lo
@@ -1218,6 +1331,8 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         # pendiente se despierta sobre un panel a medio desmontar.
         self._aplazado.stop()
         self._al_mostrar.stop()
+        self._aplazado_nube.stop()
+        self.panel_ndim.vista.set_animar(False)
         self._soltar_vinculo()
         self._desconectar_proyecto()
         self.controller.close_cube()
@@ -1235,6 +1350,10 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         guion sino una promesa -esto queda desmontado-, y quien la pide dos
         veces no tiene por que saber si ya estaba cumplida.
         """
+        if self.ventana_nube is not None:
+            ventana, self.ventana_nube = self.ventana_nube, None
+            ventana.close()
+            ventana.deleteLater()
         if self.ventana_suelta is None:
             return
         self.panel_cubo.boton_soltar.setChecked(False)

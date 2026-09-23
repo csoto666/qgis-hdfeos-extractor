@@ -2,7 +2,7 @@
 name=HDF-EOS Explorer
 qgisMinimumVersion=3.16
 description=Explore hyperspectral HDF-EOS5 cubes: click a pixel and see its spectrum.
-version=2.19
+version=2.20
 author=Carlo Soto Castro
 email=carlo.soto.castro@gmail.com
 
@@ -17,6 +17,9 @@ about=A hyperspectral cube is three things at once: a place, a picture and
     - RGB is chosen by wavelength, so presets work on any sensor.
     - Bad bands stay out of the statistics, not just out of the plot.
     - Name signatures, compare them by spectral angle, export to CSV.
+    - An n-D cloud of the signatures, on a plane that keeps turning:
+      two classes that overlap in one band pair come apart as it
+      turns, and a lasso brings that group back as a signature.
     - Send the visible view to the map as a georeferenced layer.
     - Link the cube's navigation with the QGIS map canvas.
     - Processing algorithm "HDF-EOS5 to ENVI", with wavelengths and FWHM.
@@ -32,7 +35,8 @@ about=A hyperspectral cube is three things at once: a place, a picture and
 icon=icon.png
 tags=hyperspectral,hdf5,hdf-eos,envi,tanager,planet,remote sensing,spectral,spectra,signature,reflectance,raster,imagery,processing,analysis,spectral library,datacube
 
-changelog=2.19 - The plugin page now reads as a list instead of a block. Checked against the HTML the QGIS Plugin Manager actually builds: it turns every line break in the about text into a <br/>, and it puts the description in a heading. So the description is now one short headline, and each capability fits a single line. No functional changes.
+changelog=2.20 - N-DIMENSIONAL CLOUD, in a window you turn on and off. A two-band scatter plot lies by omission: two classes that are clearly apart across the full spectrum can land on top of each other in the band pair you happened to pick. The way out is not to look at more pairs -426 bands make ninety thousand of them- but to look at the whole cloud and make it TURN: an n-dimensional cloud projected onto a rotating plane shows a different shadow every instant, and the eye separates moving groups far better than still ones. Every pixel of every saved signature is a point, coloured by its signature -not the mean, which cannot show whether an area was one group or two-. The labelled spokes are each band's axis: one pointing where a group stretches is the band that separates it, and spokes fade as they turn edge-on, which is information too. Drag to turn it by hand, switch a class off to see the one it was hiding, and the lasso brings a group back to the library as a new signature with its pixels, comparable by spectral angle. The rotation is a product of Givens rotations at incommensurate frequencies, so the basis stays orthonormal by construction and the tour never repeats a view; it is applied to the two basis vectors only, O(n) per frame instead of O(n squared). Drawn with QPainter: no new dependencies, as always.
+    2.19 - The plugin page now reads as a list instead of a block. Checked against the HTML the QGIS Plugin Manager actually builds: it turns every line break in the about text into a <br/>, and it puts the description in a heading. So the description is now one short headline, and each capability fits a single line. No functional changes.
     2.18 - Clearer documentation. The plugin page and the repository README now say what the plugin does and how to install it; the reasoning behind each decision moved to NOTAS.md, where whoever touches the code looks for it. No functional changes.
     2.17 - Shorter, clearer plugin page. No functional changes.
     2.16 - Much quicker on heavy cubes: bands, transects and spectra are cached, and dragging no longer queues up work. Returning to a pixel you already visited is immediate.

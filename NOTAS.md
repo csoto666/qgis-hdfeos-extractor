@@ -27,6 +27,7 @@ does and how to install it is in the [README](README.md).*
 - [Enviar la vista a QGIS](#enviar-la-vista-a-qgis)
 - [Vincular el cubo con el mapa](#vincular-el-cubo-con-el-mapa)
 - [La proyección: de dónde salen las coordenadas](#la-proyección-de-dónde-salen-las-coordenadas)
+- [La nube n-dimensional](#la-nube-n-dimensional)
 - [Por qué un cubo pesado se sentía lento, y qué se hizo](#por-qué-un-cubo-pesado-se-sentía-lento-y-qué-se-hizo)
 - [Rendimiento](#rendimiento)
 - [Arquitectura](#arquitectura)
@@ -318,6 +319,106 @@ Los 5 s del píxel nuevo son el archivo, no el plugin: es lo que cuesta
 descomprimirlo. Sobre un ENVI extraído —que está mapeado en memoria y sin
 comprimir— los mismos gestos cuestan milisegundos, y por eso **Extraer…**
 sigue siendo la mejor inversión para trabajar mucho rato sobre una escena.
+
+## La nube n-dimensional
+
+Un gráfico de dispersión de dos bandas es lo que casi todas las herramientas
+ofrecen, y casi siempre **miente por omisión**: dos clases que en el espectro
+completo están clarísimamente separadas pueden caer una encima de la otra en el
+par de bandas que uno eligió. La separación existe, pero no en ese plano.
+
+La salida no es mirar más planos de dos en dos —con 426 bandas son noventa mil
+pares— sino mirar la nube entera y hacerla **girar**. Una nube de n dimensiones
+proyectada sobre un plano que rota va enseñando una sombra distinta a cada
+instante, y el ojo humano separa grupos en movimiento muchísimo mejor que en
+una imagen quieta. Es lo que hace el *n-D Visualizer* de ENVI, y esto es lo
+mismo sobre las firmas guardadas del complemento.
+
+### La pieza matemática son dos vectores
+
+La pantalla son dos vectores ortonormales `u` y `v` en R^n: `(x, y) = (dato·u,
+dato·v)`. Girar es mover ese par.
+
+El giro se arma como producto de **rotaciones de Givens** —giros en un plano de
+dos coordenadas— con frecuencias que son raíces de primos. Dos decisiones ahí,
+y las dos importan:
+
+**Raíces de primos** porque sus cocientes son irracionales, así que el recorrido
+no tiene ciclo y la animación nunca vuelve a pasar exactamente por la misma
+vista. Con frecuencias enteras la rotación se cerraría en pocos segundos y
+dejaría de mostrar proyecciones nuevas, que es para lo único que sirve.
+
+**Se gira el plano (k, k+1) para todo k**, de modo que ninguna banda se queda
+fuera del recorrido. Si alguna no participara, su dirección nunca se vería de
+frente y un grupo separado sólo en esa banda quedaría escondido para siempre.
+
+Cada rotación de Givens es ortogonal, así que el producto también lo es y la
+base sale ortonormal **por construcción**: no hay que reortogonalizar y no hay
+deriva numérica. Y se aplican sólo a los dos vectores de la base, no a la matriz
+entera: eso es O(n) por cuadro en vez de O(n²), y con doscientas bandas
+seleccionadas es la diferencia entre animar y no animar.
+
+Una prueba fija que la base es ortonormal a cualquier `t`, y otra que la
+proyección nunca alarga un vector —la sombra no puede ser más larga que el
+objeto—. Si eso fallara, las distancias que el usuario ve estarían mintiendo.
+
+### Los radios son lo que la vuelve legible
+
+Cada banda seleccionada se dibuja como un radio: su eje unitario proyectado. Un
+radio que apunta hacia donde se alarga un grupo dice que **esa banda es la que
+lo separa**. Sin ellos la nube es una mancha bonita que gira.
+
+Se dibujan más tenues cuanto más cortos, y eso también es información: un radio
+corto es una banda que en esta vista apunta casi de frente a la pantalla, y
+verlo apagarse al girar dice que ahora mismo esa banda no está separando nada.
+Sólo se rotulan los más largos y se salta el rótulo que caería encima de otro
+ya escrito, porque dos bandas casi paralelas ponen su número en el mismo sitio
+y el resultado es ilegible.
+
+### Los puntos son píxeles, no medias
+
+Cada firma guardada aporta **todos sus píxeles**, no su media. Esa es la
+diferencia que hace útil la vista: una firma de área es un solo espectro en el
+gráfico espectral y quinientos puntos aquí, y la media no muestra si el área
+era un grupo o dos.
+
+Se puede porque `Signature` guarda la lista completa de `(x, y)` desde el
+principio —se guardó para poder volver a extraer la firma del cubo y
+comprobarla, y resultó ser justo lo que esta vista necesitaba—.
+
+Hay tope de puntos por clase, y el submuestreo es **parejo y no por el
+principio**: los píxeles de un área vienen ordenados por fila, así que cortar
+los primeros N dejaría fuera media escena y el usuario vería un grupo que no
+existe.
+
+### Escalar con un solo número
+
+La nube se centra y se divide por **un** número —el máximo global— en vez de
+normalizar banda por banda. Normalizar cada banda por separado le daría a una
+banda de puro ruido el mismo peso que a una que separa las clases, y el ruido se
+comería la estructura que se venía a ver.
+
+### El lazo cierra el círculo
+
+Sin él la nube sería una vista bonita de la que no sale nada. Con él, el grupo
+que sólo se ve girando vuelve a la biblioteca como una firma con sus píxeles,
+comparable con las demás por ángulo espectral y exportable a CSV.
+
+El punto en polígono va vectorizado sobre todos los puntos a la vez: con veinte
+mil puntos, hacerlo punto por punto se nota al soltar el ratón. Y funciona con
+lazos cóncavos, que es lo que sale de dibujar a mano alzada.
+
+### Lo que cuesta
+
+La nube se arma sólo cuando la ventana está encendida, y se rehace al cambiar
+las firmas o las bandas. Leer los píxeles de todas las firmas cuesta —sobre un
+HDF5 comprimido, bastante— y no tiene sentido pagarlo por una ventana que nadie
+ve. Por eso la ventana nace apagada y el reloj se para al esconder el panel.
+
+Se dibuja con QPainter y no con OpenGL: el complemento no puede pedir
+dependencias que QGIS no traiga, y los puntos se pasan todos juntos —un
+`drawPoints` por clase— en vez de uno por uno, que es lo que multiplicaría por
+veinte el coste del cuadro.
 
 ## Rendimiento
 

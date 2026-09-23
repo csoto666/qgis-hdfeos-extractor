@@ -87,6 +87,8 @@ class PanelCubo(QtWidgets.QWidget):
     soltarPedido = pyqtSignal(bool)
     #: Pidio vincular -o desvincular- la vista con el lienzo de QGIS.
     vinculoPedido = pyqtSignal(bool)
+    #: Pidio abrir -o cerrar- la ventana de la nube n-dimensional.
+    nubePedida = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super(PanelCubo, self).__init__(parent)
@@ -219,6 +221,17 @@ class PanelCubo(QtWidgets.QWidget):
             "georreferenciada.")
         self.boton_vinculo.toggled.connect(self.vinculoPedido.emit)
         columna.addWidget(self.boton_vinculo)
+
+        self.boton_nube = QtWidgets.QPushButton("Nube n-D")
+        self.boton_nube.setCheckable(True)
+        self.boton_nube.setToolTip(
+            "Abre la nube n-dimensional de las firmas guardadas: cada\n"
+            "pixel de cada firma es un punto, proyectado sobre un plano\n"
+            "que gira. Sirve para ver si dos clases se separan de verdad\n"
+            "o solo lo parecen en el par de bandas que uno miro.\n"
+            "Se abre y se cierra sin perder nada.")
+        self.boton_nube.toggled.connect(self.nubePedida.emit)
+        columna.addWidget(self.boton_nube)
         return grupo
 
     def _grupo_herramientas(self):
@@ -329,7 +342,7 @@ class PanelCubo(QtWidgets.QWidget):
                   self.boton_rgb, self.boton_bandas_rgb, self.boton_acercar,
                   self.boton_alejar, self.boton_todo, self.boton_datos,
                   self.boton_enviar, self.boton_soltar,
-                  self.boton_vinculo):
+                  self.boton_vinculo, self.boton_nube):
             w.setEnabled(activo)
 
 

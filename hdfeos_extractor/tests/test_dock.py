@@ -882,3 +882,140 @@ def test_desplegar_no_reenciende_los_botones_apagados(panel):
     panel.grupo_firmas.cabecera.click()
 
     assert not panel.boton_guardar.isEnabled()
+
+
+# -- la nube n-dimensional --------------------------------------------------
+def guardar_un_area(panel, nombre, y0, y1):
+    panel.controller.on_area_selected(0, y0, 6, y1)
+    panel.controller.save_current(nombre)
+
+
+def test_la_nube_arranca_apagada(panel):
+    """Es una herramienta de analisis, no algo que haga falta tener delante.
+
+    El panel ya esta bastante lleno; encenderla es una decision del usuario.
+    """
+    assert not panel.panel_cubo.boton_nube.isChecked()
+    assert not panel.ventana_nube.isVisible()
+    assert not panel.panel_ndim.vista.animando()
+
+
+def test_encender_la_nube_la_arma_con_las_firmas_guardadas(panel):
+    """Cada pixel de cada firma es un punto: eso es lo que la vuelve util.
+
+    La firma guardada es la media de su area. La media no muestra si el area
+    era un grupo o dos, y para eso se vino aca.
+    """
+    guardar_un_area(panel, "arriba", 0, 2)
+    guardar_un_area(panel, "abajo", 3, 4)
+
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+
+    nube = panel.panel_ndim.vista.nube
+    assert nube is not None and not nube.vacia
+    assert [c.nombre for c in nube.clases] == ["arriba", "abajo"]
+    assert nube.X.shape[0] == sum(c.cuenta for c in nube.clases)
+    assert panel.ventana_nube.isVisible()
+
+
+def test_encenderla_sin_escena_avisa_y_no_se_queda_hundida(app):
+    """Un boton hundido sobre una ventana que no se abrio es una mentira."""
+    from hdfeos_extractor.qgis_ui.dock import HyperspectralDock
+    p = HyperspectralDock(FalsoIface())
+    p.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+    assert not p.panel_cubo.boton_nube.isChecked()
+    assert "abra una escena" in p.estado.text()
+    desmontar(p)
+
+
+def test_guardar_otra_firma_rehace_la_nube(panel):
+    guardar_un_area(panel, "una", 0, 2)
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+    antes = len(panel.panel_ndim.vista.nube.clases)
+
+    guardar_un_area(panel, "otra", 3, 4)
+    girar_el_bucle()
+    assert len(panel.panel_ndim.vista.nube.clases) == antes + 1
+
+
+def test_cambiar_las_bandas_rehace_la_nube(panel):
+    guardar_un_area(panel, "una", 0, 2)
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+
+    panel.panel_ndim.cuantas.setValue(4)
+    panel.panel_ndim._repartir()
+    girar_el_bucle()
+    assert panel.panel_ndim.vista.nube.n_dimensiones == 4
+
+
+def test_con_menos_de_dos_bandas_no_hay_nube(panel):
+    """Una nube de una dimension es una linea: no hay nada que proyectar."""
+    guardar_un_area(panel, "una", 0, 2)
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+
+    panel.panel_ndim._marcar_todas(False)
+    girar_el_bucle()
+    assert panel.panel_ndim.vista.nube is None
+
+
+def test_cerrar_la_ventana_de_la_nube_desmarca_el_boton(panel):
+    guardar_un_area(panel, "una", 0, 2)
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+
+    panel.ventana_nube.close()
+    girar_el_bucle()
+    assert not panel.panel_cubo.boton_nube.isChecked()
+    assert not panel.panel_ndim.vista.animando()
+
+
+def test_cerrar_el_panel_para_la_nube(panel):
+    """Un reloj girando sobre una ventana que nadie mira gasta cuadros."""
+    guardar_un_area(panel, "una", 0, 2)
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+    panel.panel_ndim.vista.set_animar(True)
+
+    panel.close()
+    assert not panel.panel_ndim.vista.animando()
+    assert not panel.ventana_nube.isVisible()
+
+
+def test_el_lazo_de_la_nube_vuelve_como_firma(panel, monkeypatch):
+    """Cierra el circulo: se vino a ver si un grupo existe, y se lo lleva.
+
+    Sin esto la nube seria una vista bonita de la que no sale nada; con
+    esto, el grupo que solo se ve girando se convierte en una firma con sus
+    pixeles, comparable con las demas por angulo espectral.
+    """
+    guardar_un_area(panel, "una", 0, 4)
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+
+    # El unico dialogo modal del panel vive en _pedir_nombre justamente
+    # para poder probar sin el todo lo que lo rodea.
+    monkeypatch.setattr(panel, "_pedir_nombre", lambda *a, **k: "del lazo")
+    nube = panel.panel_ndim.vista.nube
+    elegidos = list(range(min(5, nube.X.shape[0])))
+    panel._firma_desde_la_nube(elegidos)
+
+    guardada = [f for f in panel.controller.library if f.name == "del lazo"]
+    assert len(guardada) == 1
+    assert guardada[0].count == len(elegidos)
+    assert guardada[0].pixels == [nube.pixeles[i] for i in elegidos]
+
+
+def test_apagar_se_lleva_tambien_la_ventana_de_la_nube(panel):
+    guardar_un_area(panel, "una", 0, 2)
+    panel.panel_cubo.boton_nube.setChecked(True)
+    girar_el_bucle()
+    ventana = panel.ventana_nube
+
+    panel.apagar()
+    assert not ventana.isVisible()
+    assert panel.ventana_nube is None

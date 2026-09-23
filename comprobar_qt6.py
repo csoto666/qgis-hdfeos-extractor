@@ -102,6 +102,7 @@ def main():
                                                   MODO_X, MODO_ZOOM)
     from hdfeos_extractor.vista.panel_cubo import (PanelCubo,
                                                    VentanaSuelta)
+    from hdfeos_extractor.vista.panel_ndim import PanelND
     from hdfeos_extractor.vista.plegable import GrupoPlegable
     from hdfeos_extractor.vista.spectral_plot import Curva, SpectralPlot
     from hdfeos_extractor.vista import spectral_plot
@@ -192,6 +193,26 @@ def main():
             raise SystemExit("el cubo empotrado de vuelta no se pudo dibujar")
         if panel.isWindow():
             raise SystemExit("el cubo quedo convertido en ventana")
+
+        # La nube n-D: sus listas con casilla, el lienzo negro y el giro.
+        # Los enums de casilla y de politica de tamano son distintos en Qt6.
+        from hdfeos_extractor.core.ndim import nube_de_firmas
+        nd = PanelND()
+        nd.resize(900, 600)
+        nd.set_bandas_disponibles(cubo.wavelengths, cubo.unidad_espectral)
+        clase = type("F", (), {})()
+        clase.pixels = [(x, y) for y in range(4) for x in range(6)]
+        clase.name, clase.color, clase.visible = "prueba", "#33cc66", True
+        nd.set_nube(nube_de_firmas(cubo, [clase], nd.bandas()))
+        nd.show()
+        app.processEvents()
+        if nd.grab().isNull():
+            raise SystemExit("la nube n-D no se pudo dibujar")
+        nd.vista.t = 1.7
+        nd.vista._proyectados = None
+        if nd.grab().isNull():
+            raise SystemExit("la nube n-D no se pudo redibujar girada")
+        nd.close()
     finally:
         cubo.close()
 
