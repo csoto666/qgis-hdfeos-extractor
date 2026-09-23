@@ -1,27 +1,39 @@
 [general]
 name=HDF-EOS Explorer
 qgisMinimumVersion=3.16
-description=Click a pixel in a hyperspectral HDF-EOS5 cube and see its spectrum. Explores Planet Tanager and similar products without converting them, and extracts to ENVI.
-version=2.18
+description=Explore hyperspectral HDF-EOS5 cubes: click a pixel and see its spectrum.
+version=2.19
 author=Carlo Soto Castro
 email=carlo.soto.castro@gmail.com
 
-about=A hyperspectral cube is three things at once: a place, a picture and a spectrum. This plugin links the three, on the original HDF-EOS5 file and without converting anything first.
-    - Click a pixel on the map or on the cube and its full spectral signature appears at once.
-    - Drag a sampling line and the plot follows it; drag a rectangle for the area mean with its per-band standard deviation.
-    - The cube is drawn with its spectral transects as the side faces, and those faces follow the crosshair, so dragging it travels through the data.
-    - RGB composition is chosen by wavelength and not by band number, so the presets mean the same thing on any sensor.
-    - Bad bands - the file's own bbl, the water vapour windows, the noisy ends - are kept out of the mean, the deviation and the spectral angle, not just hidden from the plot.
-    - Signatures can be named, annotated, compared by spectral angle, saved to a JSON library and exported to CSV.
-    - The visible view can be sent to the map as a georeferenced layer, and cube and map can navigate together.
-    - Processing algorithm "HDF-EOS5 to ENVI" for batch conversion, with wavelengths, FWHM, fill value and bad band list.
-    No mandatory dependencies: only numpy and GDAL, both bundled with QGIS. h5py and pyqtgraph are used when present. Nothing is downloaded and no remote service is contacted.
-    ESPANOL: abre cubos hiperespectrales HDF-EOS5 y enlaza en tiempo real la posicion, la imagen y la firma espectral, sin convertir nada antes. Tambien los extrae al formato nativo de ENVI, por lotes y desde el modelador.
+about=A hyperspectral cube is three things at once: a place, a picture and
+    a spectrum. This plugin links the three on the original HDF-EOS5 file
+    (Planet Tanager and similar), without converting anything first.
 
+    - Click a pixel and its full spectral signature appears at once.
+    - Drag a sampling line and the plot follows every pixel it crosses.
+    - Drag a rectangle for the area mean, with its per-band deviation.
+    - The side faces follow the crosshair: dragging travels the data.
+    - RGB is chosen by wavelength, so presets work on any sensor.
+    - Bad bands stay out of the statistics, not just out of the plot.
+    - Name signatures, compare them by spectral angle, export to CSV.
+    - Send the visible view to the map as a georeferenced layer.
+    - Link the cube's navigation with the QGIS map canvas.
+    - Processing algorithm "HDF-EOS5 to ENVI", with wavelengths and FWHM.
+
+    No mandatory dependencies: only numpy and GDAL, both bundled with
+    QGIS. h5py and pyqtgraph are used when present. Nothing is downloaded
+    and no remote service is contacted.
+
+    ESPANOL: abre cubos hiperespectrales HDF-EOS5 y enlaza en tiempo real
+    la posicion, la imagen y la firma espectral, sin convertir nada antes.
+    Tambien los extrae al formato nativo de ENVI, por lotes y desde el
+    modelador.
 icon=icon.png
 tags=hyperspectral,hdf5,hdf-eos,envi,tanager,planet,remote sensing,spectral,spectra,signature,reflectance,raster,imagery,processing,analysis,spectral library,datacube
 
-changelog=2.18 - Clearer documentation. The plugin page and the repository README now say what the plugin does and how to install it; the reasoning behind each decision moved to NOTAS.md, where whoever touches the code looks for it. No functional changes.
+changelog=2.19 - The plugin page now reads as a list instead of a block. Checked against the HTML the QGIS Plugin Manager actually builds: it turns every line break in the about text into a <br/>, and it puts the description in a heading. So the description is now one short headline, and each capability fits a single line. No functional changes.
+    2.18 - Clearer documentation. The plugin page and the repository README now say what the plugin does and how to install it; the reasoning behind each decision moved to NOTAS.md, where whoever touches the code looks for it. No functional changes.
     2.17 - Shorter, clearer plugin page. No functional changes.
     2.16 - Much quicker on heavy cubes: bands, transects and spectra are cached, and dragging no longer queues up work. Returning to a pixel you already visited is immediate.
     2.15 - The "Spectral profile" and "Saved signatures" sections fold away when you click their name, giving the height to the cube.
