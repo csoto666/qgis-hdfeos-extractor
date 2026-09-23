@@ -34,6 +34,9 @@ extracts them to ENVI's native format when they have to leave.*
   desviación y del ángulo espectral, no sólo escondidas del gráfico.
 - **Biblioteca de firmas** con nombre, notas, comparación por ángulo espectral,
   guardado en JSON y exportación a CSV.
+- **Cada firma sabe dónde se tomó**: dos capas vectoriales con su huella —los
+  píxeles como puntos, las áreas como polígonos—, que se mantienen al día
+  solas y se exportan a GeoJSON.
 - **Nube n-dimensional** de las firmas guardadas, en una ventana aparte que se
   enciende y se apaga: cada píxel de cada firma es un punto, proyectado sobre
   un plano que gira. Dos clases que se tapan en el par de bandas que elegiste
@@ -132,6 +135,35 @@ processing.run("hdfeos_extractor:extraer_hdfeos_a_envi", {
     'CARPETA': '/ruta/salida', 'PREFIJO': '',
 })
 ```
+
+### Dónde se tomó cada firma
+
+Cada firma guarda desde siempre la lista completa de píxeles de los que salió.
+En **Archivo → Huellas al mapa** esa lista se convierte en geometría y aparecen
+dos capas en el proyecto:
+
+| Capa | Qué lleva |
+|---|---|
+| **Firmas - puntos** | Las firmas de un píxel y las de píxeles sueltos, como punto y multipunto |
+| **Firmas - áreas** | Las firmas de un rectángulo, como polígono de su borde exterior |
+
+Dos capas y no una porque casi ninguna herramienta abre una capa de geometría
+mixta. Cada huella lleva el **color de su curva** en el gráfico, que es lo que
+relaciona el mapa con el perfil espectral sin leer ninguna leyenda, y una tabla
+con el nombre, el tipo, el número de píxeles, la fecha, la procedencia, las
+notas y el rango espectral.
+
+**Se agregan una vez y se mantienen al día solas**: a partir de ahí cada firma
+nueva aparece en el mapa sin volver a pedirlo. Si las quitas del proyecto, el
+complemento las suelta y no te las devuelve —quitarlas es una decisión tuya—.
+
+Los píxeles sueltos salen como varios puntos y **no** como su caja envolvente: esa
+caja pinta en el mapa hectáreas que nadie midió. Y una firma leída de un CSV
+ajeno, que no trae píxeles, se queda fuera y se dice cuántas —inventarle una
+posición sería afirmar algo falso—.
+
+**Archivo → Huellas a GeoJSON…** escribe lo mismo en dos archivos,
+**reproyectados a longitud/latitud**, que es lo que el formato significa.
 
 ### La nube n-dimensional
 

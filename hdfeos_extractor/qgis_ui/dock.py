@@ -50,6 +50,9 @@ from ..vista.qt import (HORIZONTAL, VERTICAL, QtCore, QtGui,
 from ..vista.spectral_plot import SpectralPlot
 from . import map_tools
 from .controller import SpatialSpectralController
+from .capas import (ErrorCapas, agregar_al_proyecto,
+                    capas_de_firmas, exportar_geojson,
+                    rellenar, repartir_huellas)
 from .exportar import ErrorExportar, enviar_vista
 from .render import aplicar_composicion
 from .vinculo import VinculoVistas
@@ -136,6 +139,7 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self._bloqueado = False        # corta los bucles de senales
         self.divisor = None            # existe recien en _construir
         self._reparto_previo = None    # el reparto de antes de plegar
+        self.capas_huellas = []        # las capas de sitios, si se pidieron
         self._cubo_suelto = False
         self.vinculo = None            # necesita el cubo, que aun no existe
         # Hijo del panel a proposito: Qt lo destruye junto con el, asi que un
@@ -583,6 +587,14 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.accion_guardar_lib = self.menu_lib.addAction(
             "Guardar biblioteca...")
         self.accion_csv = self.menu_lib.addAction("Exportar CSV...")
+        self.menu_lib.addSeparator()
+        self.accion_huellas = self.menu_lib.addAction("Huellas al mapa")
+        self.accion_huellas.setToolTip(
+            "Agrega al proyecto dos capas con el sitio de cada firma: los\n"
+            "pixeles sueltos como puntos y las areas como poligonos.\n"
+            "Una vez agregadas se mantienen al dia solas.")
+        self.accion_geojson = self.menu_lib.addAction(
+            "Huellas a GeoJSON...")
         self.boton_lib = QtWidgets.QToolButton()
         self.boton_lib.setText("Archivo")
         self.boton_lib.setMenu(self.menu_lib)
@@ -661,12 +673,15 @@ class HyperspectralDock(QtWidgets.QDockWidget):
         self.accion_abrir_lib.triggered.connect(self._abrir_biblioteca)
         self.accion_guardar_lib.triggered.connect(self._guardar_biblioteca)
         self.accion_csv.triggered.connect(self._exportar_csv)
+        self.accion_huellas.triggered.connect(self._huellas_al_mapa)
+        self.accion_geojson.triggered.connect(self._huellas_a_geojson)
         self.combo_paleta.currentTextChanged.connect(self.cubo.set_paleta)
         self.boton_rgb.clicked.connect(self._volver_al_rgb)
 
         self.controller.curvasCambiadas.connect(self.grafico.set_curvas)
         self.controller.bibliotecaCambiada.connect(self._refrescar_lista)
         self.controller.bibliotecaCambiada.connect(self._rehacer_la_nube)
+        self.controller.bibliotecaCambiada.connect(self._refrescar_huellas)
         self.controller.pixelCambiado.connect(self._mostrar_pixel)
         self.controller.pixelCambiado.connect(self.cubo.set_posicion)
         self.controller.transectoCambiado.connect(self._mostrar_transecto)
@@ -686,6 +701,74 @@ class HyperspectralDock(QtWidgets.QDockWidget):
 
         QgsProject.instance().layersAdded.connect(self.recargar_capas)
         QgsProject.instance().layersRemoved.connect(self.recargar_capas)
+
+    # -- huellas: donde se tomo cada firma ----------------------------------
+    def _huellas_al_mapa(self):
+        """Dos capas con el sitio de cada firma: puntos y areas.
+
+        El dato ya estaba -cada firma guarda su lista de pixeles- y no se
+        estaba usando. Una firma sin sitio en el mapa es media firma: dice
+        que midio, no donde.
+        """
+        firmas = list(self.controller.library)
+        if not firmas:
+            self._avisar("No hay firmas guardadas")
+            return
+        try:
+            puntos, areas, aviso = capas_de_firmas(
+                firmas, self.controller.geo, self.controller.georref)
+        except ErrorCapas as exc:
+            self._avisar(str(exc))
+            return
+        self.capas_huellas = [c for c in (puntos, areas) if c is not None]
+        agregar_al_proyecto(self.capas_huellas)
+        self._avisar(aviso)
+
+    def _refrescar_huellas(self):
+        """Pone al dia las capas de huellas, si siguen en el proyecto.
+
+        Es lo que hace que agregarlas una vez alcance: a partir de ahi cada
+        firma nueva aparece sola en el mapa. Si el usuario las quito, se
+        sueltan y no se vuelven a agregar: quitarlas es una decision suya.
+        """
+        if not self.capas_huellas:
+            return
+        vivas = QgsProject.instance().mapLayers()
+        if any(c.id() not in vivas for c in self.capas_huellas):
+            self.capas_huellas = []
+            return
+        puntos, areas, _ = repartir_huellas(list(self.controller.library),
+                                            self.controller.geo)
+        for capa in self.capas_huellas:
+            pares = areas if capa.name().endswith("areas") else puntos
+            rellenar(capa, pares)
+            capa.triggerRepaint()
+
+    def _huellas_a_geojson(self):
+        """Escribe las huellas en dos GeoJSON, reproyectadas a lon/lat."""
+        firmas = list(self.controller.library)
+        if not firmas:
+            self._avisar("No hay firmas guardadas")
+            return
+        ruta, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Exportar huellas a GeoJSON", "huellas",
+            "GeoJSON (*.geojson)")
+        if not ruta:
+            return
+        base = ruta[:-8] if ruta.endswith(".geojson") else ruta
+        try:
+            escritos, aviso = exportar_geojson(
+                firmas, self.controller.geo, self.controller.georref, base)
+        except (ErrorCapas, OSError) as exc:
+            self._avisar("No se pudo escribir el GeoJSON: %s" % exc)
+            return
+        if not escritos:
+            self._avisar("Ninguna firma guardada dice de que pixeles salio, "
+                         "asi que no hay nada que ubicar en el mapa")
+            return
+        detalle = ", ".join("%s (%d)" % (r.rsplit("/", 1)[-1], n)
+                            for r, n in escritos)
+        self._avisar(("Huellas escritas: %s. " % detalle) + aviso)
 
     # -- nube n-dimensional -------------------------------------------------
     def _abrir_la_nube(self, abrir):

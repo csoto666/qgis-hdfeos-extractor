@@ -1019,3 +1019,94 @@ def test_apagar_se_lleva_tambien_la_ventana_de_la_nube(panel):
     panel.apagar()
     assert not ventana.isVisible()
     assert panel.ventana_nube is None
+
+
+# -- las huellas: donde se tomo cada firma ----------------------------------
+def test_las_huellas_van_a_dos_capas(panel):
+    """Un pixel es un punto y un rectangulo es un poligono: no es lo mismo,
+    y mezclarlos en una capa hace que casi ninguna herramienta la abra."""
+    panel.controller.on_pixel_changed(2, 1)
+    panel.controller.save_current("un pixel")
+    guardar_un_area(panel, "un area", 0, 2)
+
+    panel._huellas_al_mapa()
+
+    nombres = sorted(c.name() for c in panel.capas_huellas)
+    assert nombres == ["Firmas - areas", "Firmas - puntos"]
+    from qgis.core import QgsProject
+    assert all(c.id() in QgsProject.instance().mapLayers()
+               for c in panel.capas_huellas)
+
+
+def test_sin_firmas_no_se_crea_ninguna_capa(panel):
+    panel._huellas_al_mapa()
+    assert panel.capas_huellas == []
+    assert "No hay firmas" in panel.estado.text()
+
+
+def test_agregarlas_una_vez_alcanza(panel):
+    """La firma siguiente aparece sola en el mapa. Si hubiera que volver a
+    pedirlo cada vez, la capa estaria desactualizada la mitad del tiempo."""
+    panel.controller.on_pixel_changed(2, 1)
+    panel.controller.save_current("primera")
+    panel._huellas_al_mapa()
+    capa = [c for c in panel.capas_huellas if c.name().endswith("puntos")][0]
+    assert capa.featureCount() == 1
+
+    panel.controller.on_pixel_changed(3, 2)
+    panel.controller.save_current("segunda")
+
+    assert capa.featureCount() == 2
+    assert capa is [c for c in panel.capas_huellas
+                    if c.name().endswith("puntos")][0]
+
+
+def test_si_el_usuario_quita_las_capas_no_se_las_devolvemos(panel):
+    """Quitarlas es una decision suya. Volver a ponerlas seria discutirsela."""
+    from qgis.core import QgsProject
+    panel.controller.on_pixel_changed(2, 1)
+    panel.controller.save_current("una")
+    panel._huellas_al_mapa()
+    for capa in list(panel.capas_huellas):
+        QgsProject.instance().removeMapLayer(capa.id())
+
+    panel.controller.on_pixel_changed(3, 2)
+    panel.controller.save_current("otra")
+
+    assert panel.capas_huellas == []
+
+
+def test_las_huellas_a_geojson_escriben_dos_archivos(panel, tmp_path,
+                                                     monkeypatch):
+    panel.controller.on_pixel_changed(2, 1)
+    panel.controller.save_current("un pixel")
+    guardar_un_area(panel, "un area", 0, 2)
+    destino = str(tmp_path / "huellas.geojson")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (destino, "")))
+
+    panel._huellas_a_geojson()
+
+    import os
+    escritos = sorted(a for a in os.listdir(str(tmp_path))
+                      if a.endswith(".geojson"))
+    assert escritos == ["huellas_areas.geojson", "huellas_puntos.geojson"]
+    assert "Huellas escritas" in panel.estado.text()
+
+
+def test_una_firma_sin_pixeles_no_se_inventa_un_sitio(panel):
+    """Una firma leida de un CSV ajeno no dice de donde salio."""
+    from hdfeos_extractor.core.spectral import Signature
+    import numpy as np
+    cubo = panel.controller.cube
+    panel.controller.library.add(
+        Signature("de fuera", cubo.wavelengths,
+                  np.ones(cubo.bands, dtype=np.float32)))
+    panel.controller.on_pixel_changed(2, 1)
+    panel.controller.save_current("de aqui")
+
+    panel._huellas_al_mapa()
+
+    capa = [c for c in panel.capas_huellas if c.name().endswith("puntos")][0]
+    assert capa.featureCount() == 1
+    assert "no traen pixeles" in panel.estado.text()

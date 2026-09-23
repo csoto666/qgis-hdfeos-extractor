@@ -159,13 +159,26 @@ class GeoTransform(object):
         el rectangulo de pixeles es un rombo en el terreno: su caja
         envolvente necesita las cuatro.
         """
-        x0, y0, x1, y1 = [int(v) for v in ventana]
-        esquinas = [self.to_map(c, f, centro=False)
-                    for c, f in ((x0, y0), (x1 + 1, y0),
-                                 (x1 + 1, y1 + 1), (x0, y1 + 1))]
+        esquinas = self.esquinas_de_ventana(ventana)
         xs = [p[0] for p in esquinas]
         ys = [p[1] for p in esquinas]
         return (min(xs), min(ys), max(xs), max(ys))
+
+    def esquinas_de_ventana(self, ventana):
+        """Ventana de pixeles -> sus cuatro esquinas en el terreno.
+
+        Las cuatro y en orden, no dos opuestas: con rotacion el rectangulo
+        de pixeles es un ROMBO en el terreno, y su caja envolvente pinta
+        terreno que la ventana nunca toco. Para dibujar la huella de una
+        firma en el mapa hace falta el rombo, no la caja.
+
+        Los extremos van DENTRO -el pixel x1 se ve-, asi que el borde
+        derecho es la esquina de x1+1.
+        """
+        x0, y0, x1, y1 = [int(v) for v in ventana]
+        return [self.to_map(c, f, centro=False)
+                for c, f in ((x0, y0), (x1 + 1, y0),
+                             (x1 + 1, y1 + 1), (x0, y1 + 1))]
 
     def ventana_de_bbox(self, bbox, samples, lines):
         """Caja en coordenadas de mapa -> ventana de pixeles, recortada.

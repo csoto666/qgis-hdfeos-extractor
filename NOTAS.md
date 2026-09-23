@@ -27,6 +27,7 @@ does and how to install it is in the [README](README.md).*
 - [Enviar la vista a QGIS](#enviar-la-vista-a-qgis)
 - [Vincular el cubo con el mapa](#vincular-el-cubo-con-el-mapa)
 - [La proyección: de dónde salen las coordenadas](#la-proyección-de-dónde-salen-las-coordenadas)
+- [La huella espacial de una firma](#la-huella-espacial-de-una-firma)
 - [La nube n-dimensional](#la-nube-n-dimensional)
 - [Por qué un cubo pesado se sentía lento, y qué se hizo](#por-qué-un-cubo-pesado-se-sentía-lento-y-qué-se-hizo)
 - [Rendimiento](#rendimiento)
@@ -319,6 +320,77 @@ Los 5 s del píxel nuevo son el archivo, no el plugin: es lo que cuesta
 descomprimirlo. Sobre un ENVI extraído —que está mapeado en memoria y sin
 comprimir— los mismos gestos cuestan milisegundos, y por eso **Extraer…**
 sigue siendo la mejor inversión para trabajar mucho rato sobre una escena.
+
+## La huella espacial de una firma
+
+El dato ya estaba. `Signature` guarda la lista completa de `(x, y)` desde la
+primera versión —se guardó para poder volver a extraer la firma del cubo y
+comprobarla— y no se estaba usando para nada más. Lo único que faltaba era
+pasarla por la geotransformación y decidir qué forma le corresponde.
+
+Y le corresponde una distinta según cómo se tomó, que es justo lo que no hay que
+perder:
+
+    un píxel        →  un punto
+    un rectángulo   →  el polígono de su borde exterior
+    píxeles sueltos →  varios puntos, NO su caja envolvente
+
+**Lo último importa.** La caja que envuelve tres píxeles dispersos pinta en el
+mapa hectáreas de terreno que nadie midió, y un mapa que afirma algo que no se
+midió es peor que un mapa sin la capa.
+
+### El tipo se deduce, no se guarda
+
+Podría haber añadido un campo `tipo` a `Signature`. No lo hice: se deduce de los
+píxeles —uno solo es un punto; varios que llenan entero el rectángulo que los
+envuelve son un área; el resto son píxeles sueltos—. Así una biblioteca guardada
+con una versión anterior se puede llevar al mapa igual, sin migrar nada y sin
+echar de menos un campo que no existe.
+
+### El borde exterior, no el centro de los píxeles del borde
+
+El polígono de un área va por la esquina de fuera de sus píxeles. Tomarlo por el
+centro dejaría fuera media fila y media columna de lo que de verdad se midió.
+
+Y son las **cuatro esquinas**, no dos opuestas: con rotación —una franja de
+sensor sin ortorectificar llega inclinada— el rectángulo de píxeles es un rombo
+en el terreno, y su caja envolvente vuelve a pintar terreno que la firma nunca
+tocó. `esquinas_de_ventana` se sacó de dentro de `bbox_de_ventana`, donde ya se
+calculaba para después tirarlo.
+
+### El GeoJSON se reproyecta, no se avisa
+
+El RFC 7946 fija WGS84 y quitó el miembro `crs` que antes permitía declarar otro
+sistema. Un GeoJSON con metros UTM dentro es un archivo que cada programa
+interpreta a su manera —y casi siempre mal, como si fueran grados: la escena
+aparece en el golfo de Guinea—. Escribirlo bien es trabajo de quien lo escribe,
+así que se reproyecta a longitud/latitud. Sin SRC en la escena no hay desde
+dónde reproyectar; ahí se escribe tal cual y se dice, que es lo único honesto
+que queda.
+
+### Al día sin perder el sitio
+
+Las capas se ponen al día vaciándolas y rellenándolas, no quitándolas y creando
+otras. Una capa nueva tiene otro identificador, se va al final del árbol de capas
+y pierde el sitio y la visibilidad que el usuario le había dado. Ponerla al día
+no debería costarle eso.
+
+Antes de tocarlas se comprueba que sigan en el proyecto. Si el usuario las quitó,
+el complemento las suelta y no vuelve a agregarlas: quitarlas es una decisión
+suya y devolvérselas sería discutírsela.
+
+### El tipo de campo y Qt6
+
+Declarar los campos de una capa pasa por `QMetaType.Type` y no por
+`QVariant.Type`: **Qt6 quitó `QVariant.Type` entero**. En PyQt6 no existe ni
+`QVariant.String` ni `QVariant.Type`, y una capa cuyos campos no se pueden
+declarar es una capa que no se crea. Lo encontró el detector de enums sin
+calificar del propio repositorio, en el mismo commit que lo introdujo.
+
+Y el sistema de referencia se resuelve preguntándole a QGIS por el código EPSG
+antes de construir un WKT con GDAL: QGIS resuelve códigos sin ayuda de nadie, y
+ese camino sigue funcionando en instalaciones donde el enlace de Python con GDAL
+está roto —que las hay, y es justo donde uno no quiere perder la capa—.
 
 ## La nube n-dimensional
 
